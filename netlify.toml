@@ -1,0 +1,16 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# /api/gemini → Netlify Function (로컬 dev는 Vite 프록시가 처리)
+[[redirects]]
+  from = "/api/gemini"
+  to = "/.netlify/functions/gemini"
+  status = 200
+
+# SPA 새로고침 대응
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
