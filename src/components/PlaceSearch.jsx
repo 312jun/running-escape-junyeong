@@ -49,7 +49,7 @@ export default function PlaceSearch({ onPick, compact = false }) {
         id="place-q"
         className="custom-km-input place-search-input"
         type="search"
-        placeholder="여의도한강공원, 반포…"
+        placeholder="장소 검색 · 여의도, 반포…"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         autoComplete="off"

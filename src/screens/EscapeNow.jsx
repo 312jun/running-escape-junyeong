@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import EscapeRouteMap from '../components/EscapeRouteMap'
 import LineBadge from '../components/LineBadge'
+import StepBar from '../components/StepBar'
 import ThinkingModal from '../components/ThinkingModal'
 import { useFootRoute } from '../hooks/useFootRoute'
 import { useLiveLocation } from '../hooks/useLiveLocation'
 import { useWeather } from '../hooks/useWeather'
-import { askEscapePlan, dirLabel } from '../utils/askGemini'
+import { dirLabel } from '../utils/askGemini'
+import { planEscapeRun } from '../utils/planEscape'
 import { formatKm } from '../utils/geo'
-import { etaMin, externalMapLinks } from '../utils/route'
+import { etaMin, naverWalkUrl } from '../utils/route'
 import { isInSeoul } from '../utils/seoul'
 
 function asDest(pick) {
@@ -46,7 +48,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
     setAi({ status: 'loading', pick: null, error: null })
     setActive(null)
 
-    askEscapePlan({ entry, targetKm, weather })
+    planEscapeRun({ entry, targetKm, weather })
       .then((pick) => {
         if (cancelled) return
         if (pick.blocked) {
@@ -68,8 +70,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
 
   const pick = asDest(active) || asDest(ai.pick)
   const dest = pick?.coords
-  const { route } = useFootRoute(dest ? entry : null, dest)
-  const links = dest ? externalMapLinks(entry, dest, pick.name) : null
+  const { route } = useFootRoute(dest ? entry : null, dest, pick?.vias, pick?.route)
   const thinking =
     !outside &&
     (ai.status === 'loading' || weatherStatus === 'loading' || weatherStatus === 'idle')
@@ -85,11 +86,19 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
     : pick
       ? [pick.type === 'bus' ? '버스' : '지하철']
       : []
+  const mapsUrl =
+    dest && entry
+      ? naverWalkUrl(entry, dest, pick?.skipHangang ? [] : pick?.vias || [], {
+          from: entry.name || '출발',
+          to: pick.name || '탈출점',
+        })
+      : null
 
   return (
     <section className="screen screen-escape">
       <ThinkingModal open={thinking} targetKm={targetKm} />
 
+      <StepBar step={2} />
       <header className="page-head page-head-tight">
         <button type="button" className="back-btn" onClick={onBack}>
           ← 거리
@@ -101,41 +110,41 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
       </header>
 
       {ai.status === 'blocked' || pick?.blocked ? (
-        <div className="scoreboard">
+        <div className="dest-card">
           <p className="score-label">안내 불가</p>
-          <p className="score-name">서울만</p>
-          <p className="score-hint">
-            {pick?.reason || '서울 한강 구간에서만 탈출점을 안내해요.'}
-          </p>
+          <p className="dest-name">서울만</p>
+          <p className="dest-stats">{pick?.reason || '서울 한강 구간에서만 탈출점을 안내해요.'}</p>
         </div>
       ) : (
         <>
           {dest ? (
-            <div className="route-panel">
-              <EscapeRouteMap
-                from={entry}
-                to={dest}
-                toName={pick.name}
-                route={route}
-                live={live}
-                followLive={follow}
-              />
-              <div className="route-tools">
+            <EscapeRouteMap
+              from={entry}
+              to={dest}
+              toName={pick.name}
+              via={pick.skipHangang ? null : pick?.vias?.[0]}
+              skipHangang={Boolean(pick.skipHangang)}
+              route={route}
+              live={live}
+              followLive={follow}
+            >
+              <div className="route-fabs">
                 <button
                   type="button"
-                  className={follow ? 'loc-retry is-on' : 'loc-retry'}
+                  className={follow ? 'map-fab is-on' : 'map-fab'}
                   onClick={() => setFollow((v) => !v)}
                   disabled={!live}
+                  aria-label={follow ? '따라가기 끄기' : '내 위치 따라가기'}
                 >
-                  {follow ? '따라가는 중' : '내 위치 따라가기'}
+                  {follow ? '따라가는 중' : '따라가기'}
                 </button>
                 {geo.status !== 'ready' ? (
-                  <button type="button" className="loc-retry" onClick={geo.retry}>
-                    GPS 켜기
+                  <button type="button" className="map-fab" onClick={geo.retry}>
+                    GPS
                   </button>
                 ) : null}
               </div>
-            </div>
+            </EscapeRouteMap>
           ) : null}
 
           <div className="dest-card">
@@ -151,12 +160,12 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                       <LineBadge key={line} line={line} />
                     ))}
                   </div>
-                  <p className="dest-stats">
-                    {runKm != null ? `${formatKm(runKm)}` : ''}
-                    {runKm != null ? ` · 약 ${etaMin(runKm)}분` : ''}
-                    {pick.dir ? ` · ${dirLabel(pick.dir)}` : ''}
-                    {pick.type === 'bus' ? ' · 버스' : ' · 지하철'}
-                  </p>
+                  <div className="stat-row">
+                    {runKm != null ? <span className="stat-chip">{formatKm(runKm)}</span> : null}
+                    {runKm != null ? <span className="stat-chip">약 {etaMin(runKm)}분</span> : null}
+                    {pick.dir ? <span className="stat-chip">{dirLabel(pick.dir)}</span> : null}
+                    <span className="stat-chip">{pick.type === 'bus' ? '버스' : '지하철'}</span>
+                  </div>
                 </div>
                 {pick.pathNote ? (
                   <p className={`path-note ${pick.pathOk ? '' : 'is-warn'}`}>
@@ -188,9 +197,9 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                 ) : null}
               </>
             ) : thinking ? (
-              <p className="score-hint">모달에서 길을 보고 있어요.</p>
+              <p className="dest-stats">한강 공원길로 실제 거리를 재고 있어요.</p>
             ) : (
-              <p className="score-hint">추천을 못 받았어요. 거리를 다시 골라 보세요.</p>
+              <p className="dest-stats">추천을 못 받았어요. 거리를 다시 골라 보세요.</p>
             )}
           </div>
 
@@ -204,7 +213,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
               {active?.name && active.name !== ai.pick.name ? (
                 <button
                   type="button"
-                  className="loc-retry"
+                  className="ghost-btn"
                   onClick={() => {
                     setActive(ai.pick)
                     setFollow(false)
@@ -232,6 +241,8 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                           runKm: alt.runKm,
                           hint: alt.hint,
                           coords: alt.coords,
+                          vias: alt.vias,
+                          route: alt.route,
                           pathNote: alt.hint,
                           briefing: '',
                           reason: alt.hint,
@@ -258,19 +269,11 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
             </div>
           ) : null}
 
-          {links ? (
-            <div className="sticky-run nav-sticky">
-              <a className="run-btn nav-main" href={links.kakao} target="_blank" rel="noreferrer">
-                카카오맵으로 길찾기
+          {mapsUrl ? (
+            <div className="sticky-run">
+              <a className="run-btn run-btn-link" href={mapsUrl} target="_blank" rel="noreferrer">
+                네이버 지도로 안내
               </a>
-              <div className="nav-row">
-                <a className="loc-retry" href={links.naver} target="_blank" rel="noreferrer">
-                  네이버
-                </a>
-                <a className="loc-retry" href={links.google} target="_blank" rel="noreferrer">
-                  구글
-                </a>
-              </div>
             </div>
           ) : null}
         </>

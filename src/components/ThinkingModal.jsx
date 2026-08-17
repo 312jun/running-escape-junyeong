@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 
 const STEPS = [
-  '한강 진입점을 확인하는 중',
-  '오늘 기상 상황을 보는 중',
-  '한강 이벤트·혼잡을 짚는 중',
-  '근처 지하철·버스를 찾는 중',
-  '목표 거리에 맞는 끊을 곳을 고르는 중',
+  '한강 기준점을 잡는 중',
+  '날씨와 혼잡을 보는 중',
+  '탈출점을 고르는 중',
+  '도보 거리를 재는 중',
 ]
 
 export default function ThinkingModal({ targetKm, open }) {
@@ -19,7 +18,7 @@ export default function ThinkingModal({ targetKm, open }) {
 
     const id = window.setInterval(() => {
       setStep((n) => (n + 1) % STEPS.length)
-    }, 1600)
+    }, 1700)
 
     return () => window.clearInterval(id)
   }, [open])
@@ -36,7 +35,7 @@ export default function ThinkingModal({ targetKm, open }) {
           <span className="think-runner" />
         </div>
 
-        <p className="think-eyebrow">{targetKm}km · Gemini</p>
+        <p className="think-eyebrow">{targetKm}km · 한강</p>
         <h2 className="think-title">길을 보는 중</h2>
         <p key={step} className="think-step">
           {STEPS[step]}
@@ -47,14 +46,7 @@ export default function ThinkingModal({ targetKm, open }) {
           <span className="think-track-dot" />
         </div>
 
-        <ul className="think-checklist">
-          {STEPS.map((label, i) => (
-            <li key={label} className={i <= step ? 'is-on' : ''}>
-              <span className="think-check" />
-              {label.replace(' 중', '')}
-            </li>
-          ))}
-        </ul>
+        <p className="think-hint">{step + 1} / {STEPS.length}</p>
       </div>
     </div>
   )

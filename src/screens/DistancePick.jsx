@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import StepBar from '../components/StepBar'
 import { TARGET_KMS } from '../data/courses'
 import { useWeather } from '../hooks/useWeather'
 import { etaMin } from '../utils/route'
@@ -11,7 +12,7 @@ export default function DistancePick({ entry, onBack, onPickKm }) {
   function submitCustom(e) {
     e.preventDefault()
     const km = Number(customKm)
-    if (!Number.isFinite(km) || km <= 0 || km > 40) return
+    if (!Number.isFinite(km) || km < 0.5 || km > 40) return
     onPickKm(Math.round(km * 10) / 10)
   }
 
@@ -20,6 +21,7 @@ export default function DistancePick({ entry, onBack, onPickKm }) {
 
   return (
     <section className="screen screen-distance">
+      <StepBar step={1} />
       <header className="page-head page-head-tight">
         <button type="button" className="back-btn" onClick={onBack}>
           ← 위치
@@ -32,31 +34,26 @@ export default function DistancePick({ entry, onBack, onPickKm }) {
 
       <p className="lede lede-compact">오늘 한강에서 얼마나 뛰고 끊을까요?</p>
       {weather ? (
-        <p className={`status-note ${weather.wet ? 'is-warn' : ''}`}>
+        <p className={`weather-chip ${weather.wet ? 'is-warn' : ''}`}>
           {weather.temp}° · {weather.label}
-          {weather.wet ? ' · 비 대비, 짧게 뛰는 편이 나을 수 있어요' : ''}
+          {weather.wet ? ' · 짧게 뛰는 편이 나을 수 있어요' : ''}
         </p>
       ) : null}
 
       <div className="km-grid">
         {TARGET_KMS.map((km) => (
-          <button
-            key={km}
-            type="button"
-            className="km-chip"
-            onClick={() => onPickKm(km)}
-          >
+          <button key={km} type="button" className="km-chip" onClick={() => onPickKm(km)}>
             <span className="km-num">
               {km}
               <span className="km-unit">km</span>
             </span>
-            <span className="km-preview">약 {etaMin(km)}분 · 끊고 가기</span>
+            <span className="km-preview">약 {etaMin(km)}분</span>
           </button>
         ))}
       </div>
 
       {!customOpen ? (
-        <button type="button" className="custom-km-btn" onClick={() => setCustomOpen(true)}>
+        <button type="button" className="ghost-btn ghost-btn-block" onClick={() => setCustomOpen(true)}>
           직접 설정하기
         </button>
       ) : (
