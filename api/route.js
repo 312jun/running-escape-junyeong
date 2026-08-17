@@ -1,8 +1,4 @@
-function parsePoint(value) {
-  const [lat, lng] = String(value || '').split(',').map(Number)
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-  return { lat, lng }
-}
+import { fetchWalkingRoute, parsePoint, parseVias } from '../shared/foot-route.js'
 
 export default async function handler(req, res) {
   res.setHeader('Content-Type', 'application/json')
@@ -15,19 +11,18 @@ export default async function handler(req, res) {
 
   const from = parsePoint(req.query?.from)
   const to = parsePoint(req.query?.to)
+  const vias = parseVias(req.query?.via)
   if (!from || !to) {
     res.statusCode = 400
     res.end(JSON.stringify({ error: 'from/to 필요' }))
     return
   }
 
-  const osrm = `https://router.project-osrm.org/route/v1/foot/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`
-
   try {
-    const upstream = await fetch(osrm, { headers: { Accept: 'application/json' } })
-    const text = await upstream.text()
-    res.statusCode = upstream.status
-    res.end(text)
+    const googleKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY
+    const route = await fetchWalkingRoute(from, to, vias, { googleKey })
+    res.statusCode = 200
+    res.end(JSON.stringify(route))
   } catch (err) {
     res.statusCode = 502
     res.end(JSON.stringify({ error: err.message || 'route failed' }))

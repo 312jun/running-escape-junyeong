@@ -1,18 +1,20 @@
+import { fetchWalkingRoute, parsePoint, parseVias } from '../shared/foot-route.js'
+
 function readUrl(req) {
   const host = req.headers.host || '127.0.0.1'
   return new URL(req.url, `http://${host}`)
 }
 
-function parsePoint(value) {
-  const [lat, lng] = String(value || '').split(',').map(Number)
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
-  return { lat, lng }
-}
-
-export function routeProxy() {
+export function routeProxy(googleKey) {
   return {
     name: 'route-proxy',
     configureServer(server) {
+      if (googleKey) {
+        console.log('[route-proxy] 구글 도보 길찾기 사용')
+      } else {
+        console.log('[route-proxy] 구글 키 없음 — BRouter 도보를 메인으로 씁니다')
+      }
+
       server.middlewares.use('/api/route', async (req, res) => {
         if (req.method !== 'GET') {
           res.statusCode = 405
@@ -24,6 +26,7 @@ export function routeProxy() {
         const url = readUrl(req)
         const from = parsePoint(url.searchParams.get('from'))
         const to = parsePoint(url.searchParams.get('to'))
+        const vias = parseVias(url.searchParams.get('via'))
         if (!from || !to) {
           res.statusCode = 400
           res.setHeader('Content-Type', 'application/json')
@@ -31,16 +34,11 @@ export function routeProxy() {
           return
         }
 
-        const osrm = `https://router.project-osrm.org/route/v1/foot/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`
-
         try {
-          const upstream = await fetch(osrm, {
-            headers: { Accept: 'application/json' },
-          })
-          const text = await upstream.text()
-          res.statusCode = upstream.status
+          const route = await fetchWalkingRoute(from, to, vias, { googleKey })
+          res.statusCode = 200
           res.setHeader('Content-Type', 'application/json')
-          res.end(text)
+          res.end(JSON.stringify(route))
         } catch (err) {
           res.statusCode = 502
           res.setHeader('Content-Type', 'application/json')

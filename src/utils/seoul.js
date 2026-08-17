@@ -61,3 +61,50 @@ export async function geocodeSeoulName(name) {
   const hits = await searchSeoulPlaces(name)
   return hits[0] ?? null
 }
+
+export async function nearestBusStop(lat, lng, radiusM = 1200) {
+  const query = `[out:json][timeout:12];node["highway"="bus_stop"](around:${radiusM},${lat},${lng});out 20;`
+  const res = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: `data=${encodeURIComponent(query)}`,
+  })
+  if (!res.ok) throw new Error('정류장 검색 실패')
+
+  const data = await res.json().catch(() => ({}))
+  const nodes = Array.isArray(data.elements) ? data.elements : []
+  const ranked = nodes
+    .map((node) => {
+      const stopLat = Number(node.lat)
+      const stopLng = Number(node.lon)
+      if (!isInSeoul(stopLat, stopLng)) return null
+      const name = String(node.tags?.name || node.tags?.ref || '').trim()
+      return {
+        name: name || '가까운 버스 정류장',
+        lat: stopLat,
+        lng: stopLng,
+        km: haversine(lat, lng, stopLat, stopLng),
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.km - b.km)
+
+  const best = ranked[0]
+  if (!best) return null
+  return {
+    name: best.name,
+    type: 'bus',
+    lines: ['버스'],
+    coords: { lat: best.lat, lng: best.lng },
+  }
+}
+
+function haversine(lat1, lng1, lat2, lng2) {
+  const toRad = (d) => (d * Math.PI) / 180
+  const dLat = toRad(lat2 - lat1)
+  const dLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
+  return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a)))
+}

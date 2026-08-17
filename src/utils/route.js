@@ -1,10 +1,32 @@
 import { haversineKm, locateOnTrack } from './geo'
+import {
+  hangangPathStats,
+  hangangRunVias,
+  hangangSpineBetween,
+  hangangSpinePoints,
+  uniqueKeep,
+} from './hangang'
 
 const PACE_MIN_PER_KM = 6
 
 export function etaMin(km) {
   if (!Number.isFinite(km) || km <= 0) return 1
   return Math.max(1, Math.round(km * PACE_MIN_PER_KM))
+}
+
+export function naverWalkUrl(from, to, vias = [], names = {}) {
+  const place = (point, name) =>
+    `${point.lng},${point.lat},${encodeURIComponent(name)},PLACE`
+
+  const start = place(from, names.from || '출발')
+  const goal = place(to, names.to || '도착')
+  const via = vias?.length
+    ? vias
+        .map((p, i) => place(p, i === 0 ? '한강' : `경유${i + 1}`))
+        .join(':')
+    : '-'
+
+  return `https://map.naver.com/p/directions/${start}/${goal}/${via}/walk`
 }
 
 export function pathLengthKm(points) {
@@ -148,50 +170,104 @@ export function slicePath(points, t) {
   return points
 }
 
-async function readOsrm(url) {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error('route http')
-  const data = await res.json()
-  const geometry = data?.routes?.[0]?.geometry?.coordinates
-  if (!Array.isArray(geometry) || geometry.length < 2) throw new Error('route empty')
+function viaQuery(vias) {
+  if (!vias?.length) return ''
+  return `&via=${vias.map((p) => `${p.lat},${p.lng}`).join('|')}`
+}
 
-  const raw = geometry.map(([lng, lat]) => ({ lat, lng }))
-  const points = densifyPath(raw)
-  const km = data.routes[0].distance / 1000
+async function readWalkingApi(from, to, vias) {
+  const res = await fetch(
+    `/api/route?from=${from.lat},${from.lng}&to=${to.lat},${to.lng}${viaQuery(vias)}`,
+  )
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok || !Array.isArray(data.points) || data.points.length < 2) {
+    throw new Error(data.error || 'route empty')
+  }
+  return {
+    points: densifyPath(data.points),
+    km: Number(data.km) || pathLengthKm(data.points),
+    durationMin: Number(data.durationMin) || etaMin(Number(data.km) || pathLengthKm(data.points)),
+    source: data.source || 'walk',
+  }
+}
+
+export async function fetchFootRoute(from, to, vias = []) {
+  const routed = await readWalkingApi(from, to, vias)
+  return {
+    ...routed,
+    vias,
+    viaHangang: vias.length > 0,
+  }
+}
+
+function joinLegs(parts) {
+  return uniqueKeep(
+    parts.flatMap((part) => part || []),
+    0.02,
+  )
+}
+
+/** 한강변을 본길로 고정: 긴 공원길 + 역까지는 짧은 이탈만 */
+export async function composeHangangRoute(from, to, opts = {}) {
+  const { startSnap, endSnap, riverKm, points: spine } = hangangSpineBetween(
+    from,
+    to,
+    opts.riverEndKm,
+  )
+  const inLeg = { points: densifyPath([from, startSnap], 0.025) }
+  const outLeg = { points: densifyPath([endSnap, to], 0.025) }
+
+  const points = joinLegs([inLeg.points, spine, outLeg.points])
+  const km = pathLengthKm(points)
+  const stats = hangangPathStats(points)
+  const vias = hangangRunVias(from, to, 5, opts.riverEndKm)
+
   return {
     points,
     km,
-    durationMin: Math.max(1, Math.round(data.routes[0].duration / 60)),
-    source: 'osrm',
+    durationMin: etaMin(km),
+    source: 'hangang',
+    viaHangang: true,
+    hangangKm: Math.max(stats.hangangKm, riverKm),
+    hangangShare: stats.share,
+    vias,
   }
 }
 
-export async function fetchFootRoute(from, to) {
-  const coords = `${from.lng},${from.lat};${to.lng},${to.lat}`
-  try {
-    return await readOsrm(`/api/route?from=${from.lat},${from.lng}&to=${to.lat},${to.lng}`)
-  } catch {
-    return readOsrm(
-      `https://router.project-osrm.org/route/v1/foot/${coords}?overview=full&geometries=geojson`,
-    )
+export async function loadRunPath(from, to, vias = [], opts = {}) {
+  const alongHangang = opts.hangang !== false && (opts.hangang || vias.length > 0)
+  if (alongHangang) {
+    try {
+      return await composeHangangRoute(from, to, opts)
+    } catch {
+      const points = densifyPath(hangangSpinePoints(from, to))
+      const km = pathLengthKm(points)
+      const stats = hangangPathStats(points)
+      return {
+        points,
+        km,
+        durationMin: etaMin(km),
+        source: 'hangang',
+        viaHangang: true,
+        hangangKm: stats.hangangKm,
+        hangangShare: stats.share,
+        vias: hangangRunVias(from, to),
+      }
+    }
   }
-}
 
-export async function loadRunPath(from, to) {
   try {
-    return await fetchFootRoute(from, to)
+    return await fetchFootRoute(from, to, vias)
   } catch {
     const points = fallbackPath(from, to)
     const km = pathLengthKm(points)
-    return { points, km, durationMin: etaMin(km), source: 'curve' }
-  }
-}
-
-export function externalMapLinks(from, to, toName) {
-  const name = encodeURIComponent(toName || '탈출점')
-  return {
-    kakao: `https://map.kakao.com/link/to/${name},${to.lat},${to.lng}`,
-    naver: `https://map.naver.com/p/directions/${from.lng},${from.lat},출발점,/${to.lng},${to.lat},${name},/-/walk`,
-    google: `https://www.google.com/maps/dir/?api=1&origin=${from.lat},${from.lng}&destination=${to.lat},${to.lng}&travelmode=walking`,
+    return {
+      points,
+      km,
+      durationMin: etaMin(km),
+      source: 'straight',
+      viaHangang: false,
+      vias,
+    }
   }
 }
