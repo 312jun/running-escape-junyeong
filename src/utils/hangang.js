@@ -76,16 +76,17 @@ export function pickRiverExit(from, targetKm, dir) {
   const total = trackLengthKm(bank)
   const sign = dir === 'west' ? -1 : 1
   const remaining = dir === 'west' ? snap.kmFromStart : total - snap.kmFromStart
-  const bounced = remaining < want * 0.9
+  const bounced = remaining < want * 0.85
   const turnKm = bounced
     ? dir === 'west'
       ? 0.05
       : total - 0.05
     : clampTrackKm(snap.kmFromStart + sign * want, total)
-  const leftover = bounced ? Math.max(0.2, want - remaining) : 0
+  const leftover = bounced ? Math.max(0, want - remaining) : 0
   const endKm = bounced
     ? clampTrackKm(turnKm - sign * leftover, total)
     : turnKm
+  const nearBand = Math.max(0.8, want * 0.22)
 
   const scored = HANGANG_STOPS.map((stop) => {
     const at = snapToTrack(stop.lat, stop.lng, bank)
@@ -97,34 +98,26 @@ export function pickRiverExit(from, targetKm, dir) {
       off: at.offTrackKm,
       gap: Math.abs(at.kmFromStart - endKm),
     }
-  }).filter((row) => row.off <= 0.32)
+  }).filter((row) => row.off <= 0.55 && (bounced || row.along > 0.35))
 
   const sameBank = scored.filter((row) => row.stop.side === side)
   const base = sameBank.length ? sameBank : scored
-
-  const longEnough = base.filter((row) => row.along >= want * 0.95 || bounced)
-  const keepGoing = base.filter((row) => row.along >= want * 0.7)
-  const pool = (
-    longEnough.length ? longEnough : keepGoing.length ? keepGoing : base
-  ).sort((a, b) => {
+  const near = base.filter((row) => row.gap <= nearBand)
+  const pool = (near.length ? near : base).sort((a, b) => {
     const aSide = a.stop.side === side ? 0 : 1
     const bSide = b.stop.side === side ? 0 : 1
     if (aSide !== bSide) return aSide - bSide
-    if (Math.abs(a.gap - b.gap) > 0.15) return a.gap - b.gap
+    if (Math.abs(a.gap - b.gap) > 0.12) return a.gap - b.gap
     return a.off - b.off
   })
 
   const best = pool[0]
   if (!best) return null
 
-  const riverEndKm = bounced
-    ? turnKm
-    : sign > 0
-      ? Math.max(turnKm, best.snap.kmFromStart)
-      : Math.min(turnKm, best.snap.kmFromStart)
+  const riverEndKm = bounced ? turnKm : best.snap.kmFromStart
   const riverKm = bounced
     ? Math.abs(turnKm - snap.kmFromStart) + Math.abs(turnKm - best.snap.kmFromStart)
-    : Math.abs(riverEndKm - snap.kmFromStart)
+    : Math.abs(best.snap.kmFromStart - snap.kmFromStart)
 
   return {
     dir,

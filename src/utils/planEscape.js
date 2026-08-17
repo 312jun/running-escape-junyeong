@@ -4,15 +4,25 @@ import { formatKm } from './geo'
 import { composeHangangRoute, loadRunPath } from './route'
 import { nearestBusStop } from './seoul'
 
+function fitScore(runKm, targetKm) {
+  const ratio = targetKm > 0 ? Number(runKm) / targetKm : 99
+  if (ratio >= 0.85 && ratio <= 1.2) return 0
+  if (ratio >= 0.7 && ratio <= 1.35) return 1
+  return 2
+}
+
 function closestToTarget(rows, targetKm) {
   return [...rows].sort((a, b) => {
+    const fitA = fitScore(a.runKm, targetKm)
+    const fitB = fitScore(b.runKm, targetKm)
+    if (fitA !== fitB) return fitA - fitB
+    const dA = Math.abs(Number(a.runKm) - targetKm)
+    const dB = Math.abs(Number(b.runKm) - targetKm)
+    if (Math.abs(dA - dB) > 0.25) return dA - dB
     const shareA = Number(a.route?.hangangShare) || 0
     const shareB = Number(b.route?.hangangShare) || 0
-    if (Math.abs(shareA - shareB) > 0.02) return shareB - shareA
-    const hangA = Number(a.route?.hangangKm) || 0
-    const hangB = Number(b.route?.hangangKm) || 0
-    if (Math.abs(hangA - hangB) > 0.12) return hangB - hangA
-    return Math.abs(a.runKm - targetKm) - Math.abs(b.runKm - targetKm)
+    if (Math.abs(shareA - shareB) > 0.08) return shareB - shareA
+    return dA - dB
   })[0]
 }
 
@@ -147,9 +157,9 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
         : null
     if (byName || byIndex) {
       const cand = byName || byIndex
-      const candHang = Number(cand.route?.hangangKm) || 0
-      const nowHang = Number(chosen.route?.hangangKm) || 0
-      if (candHang >= nowHang * 0.98) {
+      const candDelta = Math.abs(Number(cand.runKm) - targetKm)
+      const nowDelta = Math.abs(Number(chosen.runKm) - targetKm)
+      if (candDelta <= nowDelta + 0.4) {
         chosen = cand
         if (decision.reason) chosen = { ...chosen, reason: String(decision.reason).slice(0, 240) }
       }
@@ -160,7 +170,10 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
 
   if (draft?.name) {
     const geminiMatch = pool.find((row) => row.name === draft.name)
-    if (geminiMatch && (Number(geminiMatch.route?.hangangKm) || 0) >= (Number(chosen.route?.hangangKm) || 0) * 0.98) {
+    if (
+      geminiMatch &&
+      Math.abs(Number(geminiMatch.runKm) - targetKm) <= Math.abs(Number(chosen.runKm) - targetKm) + 0.4
+    ) {
       chosen = {
         ...geminiMatch,
         reason: chosen.reason || draft.reason,
