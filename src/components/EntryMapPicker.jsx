@@ -1,22 +1,5 @@
-import { useEffect, useRef } from 'react'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
-
-const TILES = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-
-const pinIcon = L.divIcon({
-  className: 'entry-pin',
-  html: '<span class="entry-pin-dot"></span>',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-})
-
-const liveIcon = L.divIcon({
-  className: 'you-marker',
-  html: '<span class="you-pulse"></span><span class="you-core"></span>',
-  iconSize: [28, 28],
-  iconAnchor: [14, 14],
-})
+import { useEffect, useRef, useState } from 'react'
+import { createMap } from '../utils/mapEngine'
 
 export default function EntryMapPicker({ center, pin, live, onPick, hint }) {
   const wrapRef = useRef(null)
@@ -24,30 +7,28 @@ export default function EntryMapPicker({ center, pin, live, onPick, hint }) {
   const markerRef = useRef(null)
   const liveRef = useRef(null)
   const onPickRef = useRef(onPick)
+  const [ready, setReady] = useState(0)
   onPickRef.current = onPick
 
   useEffect(() => {
-    if (!wrapRef.current || mapRef.current) return undefined
+    const el = wrapRef.current
+    if (!el) return undefined
 
-    const map = L.map(wrapRef.current, {
-      zoomControl: true,
-      attributionControl: true,
-    }).setView([center.lat, center.lng], 14)
-
-    L.tileLayer(TILES, {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap',
-    }).addTo(map)
-
-    map.on('click', (e) => {
-      onPickRef.current?.({ lat: e.latlng.lat, lng: e.latlng.lng })
-    })
+    let map
+    try {
+      map = createMap(el, { center, zoom: 15 })
+    } catch (err) {
+      console.warn('[map] 위치 지도를 못 그렸습니다:', err.message)
+      return undefined
+    }
 
     mapRef.current = map
-    requestAnimationFrame(() => map.invalidateSize())
+    map.onClick((pt) => onPickRef.current?.(pt))
+    requestAnimationFrame(() => map.resize())
+    setReady((n) => n + 1)
 
     return () => {
-      map.remove()
+      map.destroy()
       mapRef.current = null
       markerRef.current = null
       liveRef.current = null
@@ -59,31 +40,39 @@ export default function EntryMapPicker({ center, pin, live, onPick, hint }) {
     if (!map || !pin) return
 
     if (!markerRef.current) {
-      markerRef.current = L.marker([pin.lat, pin.lng], { icon: pinIcon }).addTo(map)
+      markerRef.current = map.marker({
+        position: pin,
+        html: '<span class="entry-pin"><span class="entry-pin-dot"></span></span>',
+        anchor: [9, 9],
+        zIndex: 400,
+      })
     } else {
-      markerRef.current.setLatLng([pin.lat, pin.lng])
+      markerRef.current.setLatLng(pin)
     }
-    map.panTo([pin.lat, pin.lng])
-  }, [pin])
+    map.panTo(pin)
+  }, [pin, ready])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
 
     if (!live) {
-      if (liveRef.current) {
-        map.removeLayer(liveRef.current)
-        liveRef.current = null
-      }
+      liveRef.current?.setVisible(false)
       return
     }
 
     if (!liveRef.current) {
-      liveRef.current = L.marker([live.lat, live.lng], { icon: liveIcon, zIndexOffset: 500 }).addTo(map)
+      liveRef.current = map.marker({
+        position: live,
+        html: '<span class="you-marker"><span class="you-pulse"></span><span class="you-core"></span></span>',
+        anchor: [14, 14],
+        zIndex: 500,
+      })
     } else {
-      liveRef.current.setLatLng([live.lat, live.lng])
+      liveRef.current.setLatLng(live)
+      liveRef.current.setVisible(true)
     }
-  }, [live])
+  }, [live, ready])
 
   return (
     <div className="entry-map-block">
