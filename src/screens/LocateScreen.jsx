@@ -63,11 +63,13 @@ export default function LocateScreen({ onLocated }) {
     <section className="screen screen-locate">
       <StepBar step={0} />
       <header className="home-hero home-hero-tight">
-        <p className="eyebrow">뛰다 · 끊기</p>
-        <h1>한강탈출</h1>
-        <p className="lede lede-compact">
-          출발 위치를 찍으면, 한강이 가까우면 한강으로, 아니면 근처 하천·강을 따라 끊을 곳을 찾아 줘요.
+        <h1>RIVERUN</h1>
+        <p className="home-tagline">서울의 물길을 따라 달리고, 역에서 돌아오다</p>
+        <p className="home-how">매일 같은 길을 왕복하는 대신, 오늘은 물길을 따라 끝까지 가보세요.</p>
+        <p className="home-how">
+          출발지와 거리만 정하면, 한강과 하천을 따라 흐르듯 이어지는 나만의 편도 러닝 코스가 만들어집니다.
         </p>
+        <p className="home-how">다리가 멈추는 곳엔 언제나 지하철역이 있으니까요.</p>
         <p className="home-stat">
           지금까지 코스 추천 <strong>{recommendCount.toLocaleString('ko-KR')}</strong>회
         </p>

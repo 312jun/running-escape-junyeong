@@ -47,6 +47,7 @@ export default function ThinkingModal({ targetKm, open }) {
         </div>
 
         <p className="think-hint">{step + 1} / {STEPS.length}</p>
+        <p className="think-wait">최대 30초 정도 걸릴 수 있어요</p>
       </div>
     </div>
   )
