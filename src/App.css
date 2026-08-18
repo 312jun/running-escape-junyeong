@@ -577,8 +577,9 @@
 }
 
 .entry-map-hint {
-  font-size: 13px;
-  color: var(--muted);
+  font-size: 15px;
+  font-weight: 600;
+  color: #111111;
 }
 
 .entry-map {
