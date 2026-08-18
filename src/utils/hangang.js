@@ -1,11 +1,6 @@
 import { HANGANG_NORTH, HANGANG_SOUTH } from '../data/hangang'
 import { HANGANG_STOPS } from '../data/hangangStops'
-import {
-  haversineKm,
-  snapToTrack,
-  trackLengthKm,
-  walkTrack,
-} from './geo'
+import { haversineKm, snapToTrack, walkTrack } from './geo'
 
 export function pickHangangBank(point) {
   const south = snapToTrack(point.lat, point.lng, HANGANG_SOUTH)
@@ -55,80 +50,136 @@ export function hangangVias(from) {
   return [{ lat: point.lat, lng: point.lng }]
 }
 
-function clampTrackKm(km, total) {
-  return Math.max(0.05, Math.min(total - 0.05, km))
-}
+const MAX_STATION_OFF_KM = 1.2
+const MIN_ALONG_KM = 0.3
 
 /**
- * 목표 km의 거의 전부를 한강변에서 채운다.
- * 접근·이탈은 아주 짧게만 빼고, 가까운 역 때문에 강변을 줄이지 않는다.
+ * 한강변에서 채울 거리. 접근·역까지 이탈을 빼서 전체 코스가 목표 km에 맞게 한다.
  */
-export function riverTargetKm(targetKm, approachKm) {
-  const target = Math.max(0.8, Number(targetKm) || 0)
-  const approach = Math.max(0, Number(approachKm) || 0)
-  return Math.max(target * 0.97, target - Math.min(approach, 0.1) - 0.06)
+export function riverTargetKm(targetKm, approachKm, exitKm = 0.15) {
+  const target = Math.max(0.5, Number(targetKm) || 0)
+  const overhead = Math.max(0, Number(approachKm) || 0) + Math.max(0, Number(exitKm) || 0)
+  return Math.max(0.3, target - overhead)
 }
 
-export function pickRiverExit(from, targetKm, dir) {
+function distanceFitScore(km, targetKm) {
+  const ratio = targetKm > 0 ? Number(km) / targetKm : 99
+  if (ratio >= 0.85 && ratio <= 1.2) return 0
+  if (ratio >= 0.7 && ratio <= 1.3) return 1
+  if (ratio >= 0.55 && ratio < 0.7) return 3
+  if (ratio > 1.3 && ratio <= 1.45) return 3
+  if (ratio < 0.55) return 4
+  return 5
+}
+
+function toExit(row) {
+  return {
+    dir: row.dir,
+    side: row.side,
+    bank: row.bank,
+    startSnap: row.startSnap,
+    approachKm: row.approachKm,
+    riverEndKm: row.snap.kmFromStart,
+    riverKm: row.along,
+    estTotal: row.estTotal,
+    stop: row.stop,
+  }
+}
+
+function collectRiverExits(from, dir) {
+  if (!from || !dir) return []
   const { bank, snap, side } = pickHangangBank(from)
   const approachKm = haversineKm(from.lat, from.lng, snap.lat, snap.lng)
-  const want = riverTargetKm(targetKm, approachKm)
-  const total = trackLengthKm(bank)
   const sign = dir === 'west' ? -1 : 1
-  const remaining = dir === 'west' ? snap.kmFromStart : total - snap.kmFromStart
-  const bounced = remaining < want * 0.85
-  const turnKm = bounced
-    ? dir === 'west'
-      ? 0.05
-      : total - 0.05
-    : clampTrackKm(snap.kmFromStart + sign * want, total)
-  const leftover = bounced ? Math.max(0, want - remaining) : 0
-  const endKm = bounced
-    ? clampTrackKm(turnKm - sign * leftover, total)
-    : turnKm
-  const nearBand = Math.max(0.8, want * 0.22)
 
-  const scored = HANGANG_STOPS.map((stop) => {
+  return HANGANG_STOPS.map((stop) => {
     const at = snapToTrack(stop.lat, stop.lng, bank)
     const along = (at.kmFromStart - snap.kmFromStart) * sign
+    const estTotal = approachKm + along + at.offTrackKm
     return {
       stop,
       snap: at,
       along,
       off: at.offTrackKm,
-      gap: Math.abs(at.kmFromStart - endKm),
+      estTotal,
+      dir,
+      side,
+      bank,
+      startSnap: snap,
+      approachKm,
+      sameBank: stop.side === side,
     }
-  }).filter((row) => row.off <= 0.55 && (bounced || row.along > 0.35))
+  }).filter((row) => row.off <= MAX_STATION_OFF_KM && row.along > MIN_ALONG_KM)
+}
 
-  const sameBank = scored.filter((row) => row.stop.side === side)
-  const base = sameBank.length ? sameBank : scored
-  const near = base.filter((row) => row.gap <= nearBand)
-  const pool = (near.length ? near : base).sort((a, b) => {
-    const aSide = a.stop.side === side ? 0 : 1
-    const bSide = b.stop.side === side ? 0 : 1
-    if (aSide !== bSide) return aSide - bSide
-    if (Math.abs(a.gap - b.gap) > 0.12) return a.gap - b.gap
+function uniqExits(rows, limit) {
+  const seen = new Set()
+  const out = []
+  for (const row of rows) {
+    if (seen.has(row.stop.name)) continue
+    seen.add(row.stop.name)
+    out.push(toExit(row))
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+/** 한 방향으로, 목표 전체 km에 가까운 강변 탈출점을 여러 개 고른다. */
+export function listRiverExits(from, targetKm, dir, limit = 3) {
+  if (!from || !dir) return []
+  const scored = collectRiverExits(from, dir)
+  if (!scored.length) return []
+
+  const target = Math.max(0.5, Number(targetKm) || 0)
+  const want = riverTargetKm(target, scored[0].approachKm)
+  const sameBank = scored.filter((row) => row.sameBank)
+  const okFit = (rows) => rows.filter((row) => distanceFitScore(row.estTotal, target) <= 3)
+  let base = sameBank.length ? sameBank : scored
+  const fitted = okFit(base)
+  if (fitted.length) base = fitted
+  else {
+    const anyFit = okFit(scored)
+    if (anyFit.length) base = anyFit
+  }
+
+  base.sort((a, b) => {
+    const fitA = distanceFitScore(a.estTotal, target)
+    const fitB = distanceFitScore(b.estTotal, target)
+    if (fitA !== fitB) return fitA - fitB
+    const dA = Math.abs(a.estTotal - target)
+    const dB = Math.abs(b.estTotal - target)
+    if (Math.abs(dA - dB) > 0.15) return dA - dB
+    if (a.sameBank !== b.sameBank) return a.sameBank ? -1 : 1
+    if (Math.abs(a.off - b.off) > 0.2) return a.off - b.off
+    return Math.abs(a.along - want) - Math.abs(b.along - want)
+  })
+
+  return uniqExits(base, limit)
+}
+
+/** 목표보다 짧거나 긴 탈출점. 대표 추천 정렬과는 별개. */
+export function listRiverExitsOffset(from, targetKm, bias, limit = 3) {
+  const target = Math.max(0.5, Number(targetKm) || 0)
+  const margin = 0.12
+  const scored = ['east', 'west'].flatMap((dir) => collectRiverExits(from, dir))
+  const sideRows =
+    bias === 'short'
+      ? scored.filter((row) => row.estTotal < target - margin)
+      : scored.filter((row) => row.estTotal > target + margin)
+
+  sideRows.sort((a, b) => {
+    if (a.sameBank !== b.sameBank) return a.sameBank ? -1 : 1
+    const dA = Math.abs(a.estTotal - target)
+    const dB = Math.abs(b.estTotal - target)
+    if (Math.abs(dA - dB) > 0.1) return dA - dB
     return a.off - b.off
   })
 
-  const best = pool[0]
-  if (!best) return null
+  return uniqExits(sideRows, limit)
+}
 
-  const riverEndKm = bounced ? turnKm : best.snap.kmFromStart
-  const riverKm = bounced
-    ? Math.abs(turnKm - snap.kmFromStart) + Math.abs(turnKm - best.snap.kmFromStart)
-    : Math.abs(best.snap.kmFromStart - snap.kmFromStart)
-
-  return {
-    dir,
-    side,
-    bank,
-    startSnap: snap,
-    approachKm,
-    riverEndKm,
-    riverKm,
-    stop: best.stop,
-  }
+export function pickRiverExit(from, targetKm, dir) {
+  return listRiverExits(from, targetKm, dir, 1)[0] || null
 }
 
 export function hangangRunVias(from, to, max = 5, riverEndKm = null) {

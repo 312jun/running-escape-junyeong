@@ -1,4 +1,5 @@
 import { geoLabel } from '../hooks/useLiveLocation'
+import { formatWeatherShort } from '../utils/weather'
 
 export default function LiveMeta({ geo, weather, fallbackName }) {
   const locating = geo.status === 'locating' || geo.status === 'idle'
@@ -14,7 +15,7 @@ export default function LiveMeta({ geo, weather, fallbackName }) {
       </p>
       {weather ? (
         <p className="weather-pill">
-          {weather.temp}° · {weather.label}
+          {formatWeatherShort(weather)}
           {weather.wet ? ' · 비 대비' : ''}
         </p>
       ) : null}

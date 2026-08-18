@@ -11,10 +11,42 @@ import { planEscapeRun } from '../utils/planEscape'
 import { formatKm } from '../utils/geo'
 import { etaMin, naverWalkUrl } from '../utils/route'
 import { isInSeoul } from '../utils/seoul'
+import { formatWeatherShort } from '../utils/weather'
 
 function asDest(pick) {
   if (!pick || pick.blocked) return null
   return pick
+}
+
+function formatSignedKm(delta) {
+  const abs = Math.abs(Number(delta) || 0)
+  if (abs < 0.05) return '목표에 맞춤'
+  const text =
+    abs < 1
+      ? `${Math.round(abs * 1000)}m`
+      : `${(Math.round(abs * 10) / 10).toFixed(1).replace(/\.0$/, '')}km`
+  return delta > 0 ? `+${text}` : `−${text}`
+}
+
+function deltaMinLabel(runKm, targetKm) {
+  const d = etaMin(runKm) - etaMin(targetKm)
+  if (d === 0) return '같은 시간'
+  return d > 0 ? `${d}분 더` : `${Math.abs(d)}분 덜`
+}
+
+function destLabel({ kind, status, thinking }) {
+  if (kind === 'short') return '짧게 끊기'
+  if (kind === 'long') return '조금 더'
+  if (status === 'ready' || kind === 'main') return '여기서 끊기'
+  if (thinking) return '길을 보는 중'
+  return '추천을 불러오지 못함'
+}
+
+/** 이지은(29, 여의도). 퇴근 러닝 목표는 지키되, 컨디션·날씨에 따라 한 정거장만 앞뒤로 끊고 싶어 한다. */
+function spreadCue(kind, weather) {
+  if (kind === 'short') return weather?.wet ? '비 올 때' : '지쳤을 때'
+  if (kind === 'long') return '여유 있을 때'
+  return ''
 }
 
 export default function EscapeNow({ entry, targetKm, onBack }) {
@@ -93,6 +125,8 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
           to: pick.name || '탈출점',
         })
       : null
+  const viewingAlt = pick?.kind === 'short' || pick?.kind === 'long'
+  const targetDelta = runKm != null ? formatSignedKm(Number(runKm) - Number(targetKm)) : null
 
   return (
     <section className="screen screen-escape">
@@ -147,9 +181,9 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
             </EscapeRouteMap>
           ) : null}
 
-          <div className="dest-card">
+          <div className={viewingAlt ? 'dest-card is-alt' : 'dest-card'}>
             <p className="score-label">
-              {ai.status === 'ready' ? '여기서 끊기' : thinking ? '길을 보는 중' : '추천을 불러오지 못함'}
+              {destLabel({ kind: pick?.kind, status: ai.status, thinking })}
             </p>
             {pick && !pick.blocked ? (
               <>
@@ -163,25 +197,33 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                   <div className="stat-row">
                     {runKm != null ? <span className="stat-chip">{formatKm(runKm)}</span> : null}
                     {runKm != null ? <span className="stat-chip">약 {etaMin(runKm)}분</span> : null}
+                    {targetDelta ? <span className="stat-chip">{targetDelta}</span> : null}
                     {pick.dir ? <span className="stat-chip">{dirLabel(pick.dir)}</span> : null}
                     <span className="stat-chip">{pick.type === 'bus' ? '버스' : '지하철'}</span>
+                    {weather ? (
+                      <span className={`stat-chip ${weather.wet ? 'is-warn' : ''}`}>
+                        {formatWeatherShort(weather)}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
-                {pick.pathNote ? (
+                {pick.pathNote && !viewingAlt ? (
                   <p className={`path-note ${pick.pathOk ? '' : 'is-warn'}`}>
                     {pick.pathOk ? '러닝 길 OK' : '길 주의'} · {pick.pathNote}
                   </p>
                 ) : null}
 
-                <button
-                  type="button"
-                  className="details-toggle"
-                  onClick={() => setOpenDetail((v) => !v)}
-                >
-                  {openDetail ? '설명 접기' : '왜 여기인지 보기'}
-                </button>
+                {!viewingAlt ? (
+                  <button
+                    type="button"
+                    className="details-toggle"
+                    onClick={() => setOpenDetail((v) => !v)}
+                  >
+                    {openDetail ? '설명 접기' : '왜 여기인지 보기'}
+                  </button>
+                ) : null}
 
-                {openDetail ? (
+                {openDetail && !viewingAlt ? (
                   <div className="dest-detail">
                     {pick.briefing ? <p className="ai-briefing">{pick.briefing}</p> : null}
                     {pick.weatherNote ? <p className="score-hint">기상 · {pick.weatherNote}</p> : null}
@@ -189,7 +231,8 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                     {pick.reason ? <p className="ai-reason">{pick.reason}</p> : null}
                     {weather ? (
                       <p className="score-hint">
-                        {weather.temp}° · {weather.label}
+                        {formatWeatherShort(weather)}
+                        {weather.feelsLike != null ? ` · 체감 ${weather.feelsLike}°` : ''}
                         {weather.precipChance != null ? ` · 강수 ${weather.precipChance}%` : ''}
                       </p>
                     ) : null}
@@ -209,25 +252,33 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
 
           {ai.pick?.alternates?.length ? (
             <div className="alt-block">
-              <p className="alt-label">다른 끊을 곳</p>
-              {active?.name && active.name !== ai.pick.name ? (
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={() => {
-                    setActive(ai.pick)
-                    setFollow(false)
-                  }}
-                >
-                  추천({ai.pick.name})으로
-                </button>
-              ) : null}
+              <div className="alt-head">
+                <p className="alt-label">컨디션에 따라</p>
+                {viewingAlt ? (
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => {
+                      setActive(ai.pick)
+                      setFollow(false)
+                    }}
+                  >
+                    추천으로
+                  </button>
+                ) : null}
+              </div>
+              <p className="alt-blurb">
+                {weather?.wet
+                  ? '오늘은 짧게 끊는 편이 나을 수 있어요'
+                  : `목표 ${targetKm}km보다 짧게, 또는 조금 더`}
+              </p>
               <div className="alt-list">
                 {ai.pick.alternates.map((alt) => {
                   const on = active?.name === alt.name
+                  const delta = Number(alt.runKm) - Number(targetKm)
                   return (
                     <button
-                      key={alt.name}
+                      key={`${alt.kind}-${alt.name}`}
                       type="button"
                       className={on ? 'alt-chip is-on' : 'alt-chip'}
                       disabled={!alt.coords}
@@ -235,32 +286,41 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                         if (!alt.coords) return
                         setActive({
                           ...ai.pick,
+                          kind: alt.kind,
                           name: alt.name,
                           type: alt.type,
                           lines: alt.lines,
                           runKm: alt.runKm,
+                          dir: alt.dir,
                           hint: alt.hint,
                           coords: alt.coords,
                           vias: alt.vias,
                           route: alt.route,
-                          pathNote: alt.hint,
+                          pathOk: alt.pathOk,
+                          pathNote: alt.pathNote || alt.hint,
                           briefing: '',
                           reason: alt.hint,
+                          weatherNote: '',
+                          eventNote: '',
                         })
                         setFollow(false)
+                        setOpenDetail(false)
                       }}
                     >
-                      <span className="stop-name">{alt.name}</span>
-                      <span className="stop-hint">
-                        {alt.runKm != null ? `${formatKm(alt.runKm)} · ` : ''}
-                        {alt.hint || (alt.type === 'bus' ? '버스' : '지하철')}
+                      <span className={`alt-kind is-${alt.kind}`}>
+                        {alt.kind === 'short' ? '짧게' : '길게'}
                       </span>
-                      <span className="line-row">
-                        {(alt.lines.length ? alt.lines : [alt.type === 'bus' ? '버스' : '지하철']).map(
-                          (line) => (
-                            <LineBadge key={line} line={line} />
-                          ),
-                        )}
+                      <span className="alt-copy">
+                        <span className="stop-name">{alt.name}</span>
+                        <span className="stop-hint">{spreadCue(alt.kind, weather)}</span>
+                      </span>
+                      <span className="alt-delta">
+                        <span className="alt-delta-km">
+                          {alt.runKm != null ? formatKm(alt.runKm) : '—'}
+                        </span>
+                        <span className="alt-delta-vs">
+                          {formatSignedKm(delta)} · {deltaMinLabel(alt.runKm, targetKm)}
+                        </span>
                       </span>
                     </button>
                   )
@@ -272,7 +332,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
           {mapsUrl ? (
             <div className="sticky-run">
               <a className="run-btn run-btn-link" href={mapsUrl} target="_blank" rel="noreferrer">
-                네이버 지도로 안내
+                {viewingAlt ? `${pick.name}으로 안내` : '네이버 지도로 안내'}
               </a>
             </div>
           ) : null}

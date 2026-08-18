@@ -1,5 +1,11 @@
 import { askEscapePlan, askGeminiChooseRoute } from './askGemini'
-import { hangangApproachKm, hangangRunVias, nearestHangangPoint, pickRiverExit } from './hangang'
+import {
+  hangangApproachKm,
+  hangangRunVias,
+  listRiverExits,
+  listRiverExitsOffset,
+  nearestHangangPoint,
+} from './hangang'
 import { formatKm } from './geo'
 import { composeHangangRoute, loadRunPath } from './route'
 import { nearestBusStop } from './seoul'
@@ -7,8 +13,19 @@ import { nearestBusStop } from './seoul'
 function fitScore(runKm, targetKm) {
   const ratio = targetKm > 0 ? Number(runKm) / targetKm : 99
   if (ratio >= 0.85 && ratio <= 1.2) return 0
-  if (ratio >= 0.7 && ratio <= 1.35) return 1
-  return 2
+  if (ratio >= 0.7 && ratio <= 1.3) return 1
+  if (ratio >= 0.55 && ratio < 0.7) return 3
+  if (ratio > 1.3 && ratio <= 1.45) return 3
+  if (ratio < 0.55) return 4
+  return 5
+}
+
+function betterOrCloseFit(cand, chosen, targetKm) {
+  const fitC = fitScore(cand.runKm, targetKm)
+  const fitN = fitScore(chosen.runKm, targetKm)
+  if (fitC < fitN) return true
+  if (fitC > fitN) return false
+  return Math.abs(Number(cand.runKm) - targetKm) <= Math.abs(Number(chosen.runKm) - targetKm) + 0.2
 }
 
 function closestToTarget(rows, targetKm) {
@@ -90,7 +107,7 @@ async function measureHangangStop(entry, stop, dir, riverEndKm) {
     coords: { lat: stop.lat, lng: stop.lng },
     dir,
     runKm: route.km,
-    pathOk: share >= 0.85,
+    pathOk: share >= 0.55 || Number(route.hangangKm) >= 1,
     pathNote: `한강변 ${formatKm(route.hangangKm)} · 전체 ${formatKm(route.km)}`,
     hint: `한강변 ${formatKm(route.hangangKm)}`,
     vias: route.vias || hangangRunVias(entry, { lat: stop.lat, lng: stop.lng }, 5, riverEndKm),
@@ -107,15 +124,24 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     return planNearestStop({ entry, targetKm, weather, toHangangKm, hangang })
   }
 
+  const target = Number(targetKm)
   const exits = ['east', 'west']
-    .map((dir) => pickRiverExit(entry, Number(targetKm), dir))
-    .filter(Boolean)
+    .flatMap((dir) => listRiverExits(entry, target, dir, 3))
+    .filter((exit, i, arr) => arr.findIndex((row) => row.stop.name === exit.stop.name) === i)
+  const mainNames = new Set(exits.map((exit) => exit.stop.name))
+  const spreadExits = ['short', 'long']
+    .flatMap((bias) => listRiverExitsOffset(entry, target, bias, 2))
+    .filter((exit, i, arr) => {
+      if (mainNames.has(exit.stop.name)) return false
+      return arr.findIndex((row) => row.stop.name === exit.stop.name) === i
+    })
 
-  const measuredAll = (
+  const measuredRows = (
     await Promise.all(
-      exits.map(async (exit) => {
+      [...exits, ...spreadExits].map(async (exit) => {
         try {
-          return await measureHangangStop(entry, exit.stop, exit.dir, exit.riverEndKm)
+          const measured = await measureHangangStop(entry, exit.stop, exit.dir, exit.riverEndKm)
+          return { ...measured, spreadOnly: !mainNames.has(exit.stop.name) }
         } catch {
           return null
         }
@@ -123,8 +149,10 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     )
   ).filter(Boolean)
 
-  const measured = measuredAll.filter((row) => (Number(row.route?.hangangShare) || 0) >= 0.8)
-  const pool = measured.length ? measured : measuredAll
+  const measuredMain = measuredRows.filter((row) => !row.spreadOnly)
+  const fitted = measuredMain.filter((row) => fitScore(row.runKm, target) <= 3)
+  const pool = fitted.length ? fitted : measuredMain
+  const spreadPool = measuredRows
 
   const draft = await askEscapePlan({
     entry,
@@ -157,9 +185,7 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
         : null
     if (byName || byIndex) {
       const cand = byName || byIndex
-      const candDelta = Math.abs(Number(cand.runKm) - targetKm)
-      const nowDelta = Math.abs(Number(chosen.runKm) - targetKm)
-      if (candDelta <= nowDelta + 0.4) {
+      if (betterOrCloseFit(cand, chosen, targetKm)) {
         chosen = cand
         if (decision.reason) chosen = { ...chosen, reason: String(decision.reason).slice(0, 240) }
       }
@@ -170,10 +196,7 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
 
   if (draft?.name) {
     const geminiMatch = pool.find((row) => row.name === draft.name)
-    if (
-      geminiMatch &&
-      Math.abs(Number(geminiMatch.runKm) - targetKm) <= Math.abs(Number(chosen.runKm) - targetKm) + 0.4
-    ) {
+    if (geminiMatch && betterOrCloseFit(geminiMatch, chosen, targetKm)) {
       chosen = {
         ...geminiMatch,
         reason: chosen.reason || draft.reason,
@@ -181,8 +204,10 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     }
   }
 
+  const { spreadOnly: _spreadOnly, ...picked } = chosen
   chosen = {
-    ...chosen,
+    ...picked,
+    kind: 'main',
     skipHangang: false,
     briefing: draft?.briefing || chosen.briefing,
     weatherNote: draft?.weatherNote || '',
@@ -191,22 +216,55 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     route: { ...chosen.route, judgedByGemini: true },
   }
 
-  const others = pool.filter((row) => row.name !== chosen.name)
+  const alternates = pickSpreadAlts(spreadPool, chosen, target)
 
   return {
     ...(draft || {}),
     ...chosen,
     vias: chosen.vias,
     skipHangang: false,
-    alternates: others.map((row) => ({
-      name: row.name,
-      type: row.type,
-      lines: row.lines,
-      runKm: row.runKm,
-      hint: row.hint || row.pathNote,
-      coords: row.coords,
-      vias: row.vias,
-      route: row.route,
-    })),
+    alternates,
   }
+}
+
+function toAlt(row, kind) {
+  return {
+    kind,
+    name: row.name,
+    type: row.type,
+    lines: row.lines,
+    runKm: row.runKm,
+    dir: row.dir,
+    pathOk: row.pathOk,
+    hint: row.hint || row.pathNote,
+    pathNote: row.pathNote || row.hint,
+    coords: row.coords,
+    vias: row.vias,
+    route: row.route,
+  }
+}
+
+function bestSpread(rows, chosen, targetKm, side) {
+  const chosenKm = Number(chosen.runKm)
+  const target = Number(targetKm)
+  const others = rows.filter((row) => row.name !== chosen.name)
+  if (side === 'short') {
+    const cap = Math.min(chosenKm, target)
+    return others
+      .filter((row) => Number(row.runKm) < cap - 0.15)
+      .sort((a, b) => Number(b.runKm) - Number(a.runKm))[0]
+  }
+  const floor = Math.max(chosenKm, target)
+  return others
+    .filter((row) => Number(row.runKm) > floor + 0.15)
+    .sort((a, b) => Number(a.runKm) - Number(b.runKm))[0]
+}
+
+function pickSpreadAlts(rows, chosen, targetKm) {
+  const shorter = bestSpread(rows, chosen, targetKm, 'short')
+  const longer = bestSpread(rows, chosen, targetKm, 'long')
+  const out = []
+  if (shorter) out.push(toAlt(shorter, 'short'))
+  if (longer) out.push(toAlt(longer, 'long'))
+  return out
 }

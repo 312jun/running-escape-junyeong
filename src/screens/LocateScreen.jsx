@@ -61,8 +61,8 @@ export default function LocateScreen({ onLocated }) {
     <section className="screen screen-locate">
       <StepBar step={0} />
       <header className="home-hero home-hero-tight">
-        <p className="eyebrow">한강 · 탈출</p>
-        <h1>어디야</h1>
+        <p className="eyebrow">뛰다 · 끊기</p>
+        <h1>한강탈출</h1>
         <p className="lede lede-compact">
           한강에 들어간 자리를 찍으면, 그 거리에서 끊을 곳을 찾아 줘요.
         </p>

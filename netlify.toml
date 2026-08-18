@@ -9,6 +9,11 @@
   to = "/.netlify/functions/gemini"
   status = 200
 
+[[redirects]]
+  from = "/api/weather"
+  to = "/.netlify/functions/weather"
+  status = 200
+
 # SPA 새로고침 대응
 [[redirects]]
   from = "/*"

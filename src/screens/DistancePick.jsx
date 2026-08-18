@@ -3,6 +3,7 @@ import StepBar from '../components/StepBar'
 import { TARGET_KMS } from '../data/courses'
 import { useWeather } from '../hooks/useWeather'
 import { etaMin } from '../utils/route'
+import { formatWeatherShort } from '../utils/weather'
 
 export default function DistancePick({ entry, onBack, onPickKm }) {
   const { weather } = useWeather(entry.lat, entry.lng)
@@ -35,7 +36,7 @@ export default function DistancePick({ entry, onBack, onPickKm }) {
       <p className="lede lede-compact">오늘 한강에서 얼마나 뛰고 끊을까요?</p>
       {weather ? (
         <p className={`weather-chip ${weather.wet ? 'is-warn' : ''}`}>
-          {weather.temp}° · {weather.label}
+          {formatWeatherShort(weather)}
           {weather.wet ? ' · 짧게 뛰는 편이 나을 수 있어요' : ''}
         </p>
       ) : null}
