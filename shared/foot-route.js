@@ -191,10 +191,10 @@ async function fetchBrouter(from, to, vias) {
   return asRoute(points, meters, 'brouter')
 }
 
-async function fetchOsrm(from, to, vias) {
+async function fetchOsrm(from, to, vias, radiusM = 120) {
   const points = [from, ...vias, to]
   const coords = points.map((p) => `${p.lng},${p.lat}`).join(';')
-  const radiuses = points.map(() => 120).join(';')
+  const radiuses = points.map(() => radiusM).join(';')
   const url = `https://routing.openstreetmap.de/routed-foot/route/v1/driving/${coords}?overview=full&geometries=geojson&alternatives=false&steps=false&generate_hints=false&radiuses=${radiuses}`
   const res = await fetch(url, { headers: jsonHeaders() })
   if (!res.ok) throw new Error(`osrm http ${res.status}`)
@@ -205,10 +205,24 @@ async function fetchOsrm(from, to, vias) {
   return asRoute(routePoints, data.routes[0].distance, 'osrm')
 }
 
-/** 구글 도보가 되면 그걸 쓰고, 한국처럼 도보 API가 막힌 곳은 BRouter(한강 공원길). */
-export async function fetchWalkingRoute(from, to, vias = [], { googleKey } = {}) {
+/** 구글 도보가 되면 그걸 쓰고, 한국처럼 도보 API가 막힌 곳은 BRouter/OSRM. */
+export async function fetchWalkingRoute(from, to, vias = [], { googleKey, preferOsrm } = {}) {
   const errors = []
   const korea = isInSouthKorea(from) && isInSouthKorea(to)
+
+  if (preferOsrm) {
+    try {
+      return await fetchOsrm(from, to, vias, 220)
+    } catch (err) {
+      errors.push(`osrm: ${err.message}`)
+    }
+    try {
+      return await fetchBrouter(from, to, vias)
+    } catch (err) {
+      errors.push(`brouter: ${err.message}`)
+      throw new Error(errors.join(' | '))
+    }
+  }
 
   if (googleKey && !korea) {
     try {

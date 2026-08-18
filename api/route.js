@@ -20,7 +20,8 @@ export default async function handler(req, res) {
 
   try {
     const googleKey = process.env.GOOGLE_MAPS_API_KEY || process.env.VITE_GOOGLE_MAPS_API_KEY
-    const route = await fetchWalkingRoute(from, to, vias, { googleKey })
+    const preferOsrm = String(req.query?.street || '') === '1'
+    const route = await fetchWalkingRoute(from, to, vias, { googleKey, preferOsrm })
     res.statusCode = 200
     res.end(JSON.stringify(route))
   } catch (err) {

@@ -1,0 +1,6 @@
+# https://running-escape-junyeong.vercel.app/
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://running-escape-junyeong.vercel.app/sitemap.xml

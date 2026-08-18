@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import EscapeRouteMap from '../components/EscapeRouteMap'
 import LineBadge from '../components/LineBadge'
 import StepBar from '../components/StepBar'
@@ -9,6 +9,8 @@ import { useWeather } from '../hooks/useWeather'
 import { dirLabel } from '../utils/askGemini'
 import { planEscapeRun } from '../utils/planEscape'
 import { formatKm } from '../utils/geo'
+import { bumpRecommendCount } from '../utils/recommendStats'
+import { trackEvent } from '../utils/ga'
 import { etaMin, naverWalkUrl } from '../utils/route'
 import { isInSeoul } from '../utils/seoul'
 import { formatWeatherShort } from '../utils/weather'
@@ -60,6 +62,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
   const [active, setActive] = useState(null)
   const [openDetail, setOpenDetail] = useState(false)
   const [follow, setFollow] = useState(false)
+  const countedRef = useRef(false)
 
   useEffect(() => {
     if (outside) {
@@ -67,7 +70,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
         status: 'blocked',
         pick: {
           blocked: true,
-          reason: '서울 밖 위치예요. 서울 한강 구간에서만 탈출점을 안내해요.',
+          reason: '서울 밖 위치예요. 서울에서만 탈출점을 안내해요.',
         },
         error: null,
       })
@@ -86,6 +89,11 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
         if (pick.blocked) {
           setAi({ status: 'blocked', pick, error: null })
           return
+        }
+        if (!countedRef.current) {
+          countedRef.current = true
+          bumpRecommendCount()
+          trackEvent('generate_route', { value: targetKm, method: pick?.kind || 'unknown' })
         }
         setAi({ status: 'ready', pick, error: null })
         setActive(pick)
@@ -123,6 +131,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
       ? naverWalkUrl(entry, dest, pick?.skipHangang ? [] : pick?.vias || [], {
           from: entry.name || '출발',
           to: pick.name || '탈출점',
+          via: pick.waterwayName || '한강',
         })
       : null
   const viewingAlt = pick?.kind === 'short' || pick?.kind === 'long'
@@ -147,7 +156,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
         <div className="dest-card">
           <p className="score-label">안내 불가</p>
           <p className="dest-name">서울만</p>
-          <p className="dest-stats">{pick?.reason || '서울 한강 구간에서만 탈출점을 안내해요.'}</p>
+          <p className="dest-stats">{pick?.reason || '서울에서만 탈출점을 안내해요.'}</p>
         </div>
       ) : (
         <>
@@ -157,6 +166,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
               to={dest}
               toName={pick.name}
               via={pick.skipHangang ? null : pick?.vias?.[0]}
+              viaLabel={pick.waterwayName || '한강'}
               skipHangang={Boolean(pick.skipHangang)}
               route={route}
               live={live}
@@ -240,7 +250,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                 ) : null}
               </>
             ) : thinking ? (
-              <p className="dest-stats">한강 공원길로 실제 거리를 재고 있어요.</p>
+              <p className="dest-stats">강변 도로로 실제 거리를 재고 있어요.</p>
             ) : (
               <p className="dest-stats">추천을 못 받았어요. 거리를 다시 골라 보세요.</p>
             )}
@@ -296,6 +306,7 @@ export default function EscapeNow({ entry, targetKm, onBack }) {
                           coords: alt.coords,
                           vias: alt.vias,
                           route: alt.route,
+                          waterwayName: alt.waterwayName || ai.pick.waterwayName,
                           pathOk: alt.pathOk,
                           pathNote: alt.pathNote || alt.hint,
                           briefing: '',

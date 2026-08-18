@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 
 const STEPS = [
-  '한강 기준점을 잡는 중',
+  '서울 강·하천 기준점을 잡는 중',
   '날씨와 혼잡을 보는 중',
   '탈출점을 고르는 중',
-  '도보 거리를 재는 중',
+  '도로 따라 거리를 재는 중',
 ]
 
 export default function ThinkingModal({ targetKm, open }) {
@@ -35,7 +35,7 @@ export default function ThinkingModal({ targetKm, open }) {
           <span className="think-runner" />
         </div>
 
-        <p className="think-eyebrow">{targetKm}km · 한강</p>
+        <p className="think-eyebrow">{targetKm}km · 서울</p>
         <h2 className="think-title">길을 보는 중</h2>
         <p key={step} className="think-step">
           {STEPS[step]}

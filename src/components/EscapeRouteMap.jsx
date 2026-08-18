@@ -12,9 +12,11 @@ function escapeHtml(value) {
 }
 
 function routeKicker(route) {
+  if (route?.waterwayName) return `${route.waterwayName} 도보`
+  if (route?.source === 'stream') return '하천 도보'
   if (route?.source === 'hangang' || route?.viaHangang) return '한강변 도보'
   if (route?.source === 'google') return 'Google 도보'
-  if (route?.source === 'brouter') return '한강 공원길'
+  if (route?.source === 'brouter') return '공원길 도보'
   if (route?.source === 'osrm') return '걸어서'
   return '도보'
 }
@@ -24,6 +26,7 @@ export default function EscapeRouteMap({
   to,
   toName,
   via,
+  viaLabel = '한강',
   skipHangang = false,
   route,
   live,
@@ -100,7 +103,7 @@ export default function EscapeRouteMap({
       via && (Math.abs(via.lat - from.lat) > 1e-5 || Math.abs(via.lng - from.lng) > 1e-5)
         ? map.marker({
             position: via,
-            html: '<span class="route-pin"><span class="route-pin-dot is-hangang"></span><span class="route-pin-label">한강</span></span>',
+            html: `<span class="route-pin"><span class="route-pin-dot is-hangang"></span><span class="route-pin-label">${escapeHtml(viaLabel || '강변')}</span></span>`,
             anchor: [8, 10],
             zIndex: 450,
           })
@@ -199,7 +202,7 @@ export default function EscapeRouteMap({
     return () => {
       window.cancelAnimationFrame(animRef.current)
     }
-  }, [from, to, toName, via, route, ready])
+  }, [from, to, toName, via, viaLabel, route, ready])
 
   useEffect(() => {
     const layers = layersRef.current
@@ -241,10 +244,10 @@ export default function EscapeRouteMap({
         ) : (
           <p className="route-hud-sub">
             {skipHangang
-              ? '한강까지가 목표 거리보다 멀어 가까운 정류장으로'
+              ? '강변까지가 목표 거리보다 멀어 가까운 정류장으로'
               : route?.hangangKm
-                ? `한강변 ${formatKm(route.hangangKm)}`
-                : '한강변을 따라 이동'}
+                ? `${route.waterwayName || viaLabel || '강변'} ${formatKm(route.hangangKm)}`
+                : '강변을 따라 이동'}
           </p>
         )}
       </div>

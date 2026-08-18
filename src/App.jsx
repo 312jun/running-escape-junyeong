@@ -2,6 +2,8 @@ import { useState } from 'react'
 import LocateScreen from './screens/LocateScreen'
 import DistancePick from './screens/DistancePick'
 import EscapeNow from './screens/EscapeNow'
+import { useScreenMeta } from './hooks/useScreenMeta'
+import { trackEvent } from './utils/ga'
 import './App.css'
 
 export default function App() {
@@ -9,10 +11,13 @@ export default function App() {
   const [entry, setEntry] = useState(null)
   const [targetKm, setTargetKm] = useState(null)
 
+  useScreenMeta(screen)
+
   function onLocated(point) {
     setEntry(point)
     setTargetKm(null)
     setScreen('distance')
+    trackEvent('select_location', { method: point?.source || 'unknown' })
   }
 
   function backToLocate() {
@@ -24,6 +29,7 @@ export default function App() {
   function pickKm(km) {
     setTargetKm(km)
     setScreen('escape')
+    trackEvent('select_distance', { value: km })
   }
 
   function backToDistance() {

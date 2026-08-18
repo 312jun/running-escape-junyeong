@@ -4,6 +4,7 @@ import PlaceSearch from '../components/PlaceSearch'
 import StepBar from '../components/StepBar'
 import { DEFAULT_CENTER } from '../data/courses'
 import { useLiveLocation } from '../hooks/useLiveLocation'
+import { getRecommendCount } from '../utils/recommendStats'
 import { isInSeoul } from '../utils/seoul'
 
 function gpsChip(geo, locating, gpsFailed) {
@@ -23,6 +24,7 @@ export default function LocateScreen({ onLocated }) {
   const [pin, setPin] = useState(null)
   const [notice, setNotice] = useState('')
   const [userPinned, setUserPinned] = useState(false)
+  const [recommendCount] = useState(getRecommendCount)
 
   useEffect(() => {
     if (userPinned) return
@@ -41,7 +43,7 @@ export default function LocateScreen({ onLocated }) {
 
   function commit(point) {
     if (!isInSeoul(point.lat, point.lng)) {
-      setNotice('서울 한강 구간에서만 쓸 수 있어요. 지도를 조금 옮겨 찍어 주세요.')
+      setNotice('서울에서만 쓸 수 있어요. 지도를 조금 옮겨 찍어 주세요.')
       return
     }
     setNotice('')
@@ -64,7 +66,10 @@ export default function LocateScreen({ onLocated }) {
         <p className="eyebrow">뛰다 · 끊기</p>
         <h1>한강탈출</h1>
         <p className="lede lede-compact">
-          한강에 들어간 자리를 찍으면, 그 거리에서 끊을 곳을 찾아 줘요.
+          출발 위치를 찍으면, 한강이 가까우면 한강으로, 아니면 근처 하천·강을 따라 끊을 곳을 찾아 줘요.
+        </p>
+        <p className="home-stat">
+          지금까지 코스 추천 <strong>{recommendCount.toLocaleString('ko-KR')}</strong>회
         </p>
       </header>
 

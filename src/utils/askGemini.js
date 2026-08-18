@@ -29,7 +29,7 @@ function normalizePick(data) {
   if (!data || typeof data !== 'object') return null
 
   if (data.inSeoul === false || data.outsideSeoul === true) {
-    return { blocked: true, reason: String(data.reason || '서울 한강 구간만 지원해요.').trim() }
+    return { blocked: true, reason: String(data.reason || '서울에서만 지원해요.').trim() }
   }
 
   const name = String(data.name || data.stopName || '').trim()
@@ -81,12 +81,13 @@ export async function askEscapePlan({
   skipHangang = false,
   toHangangKm,
   hangang,
+  waterwayName = '한강',
   candidates = [],
 }) {
   if (!isInSeoul(entry.lat, entry.lng)) {
     return {
       blocked: true,
-      reason: '서울 밖 위치예요. 서울 한강 구간에서만 탈출점을 안내해요.',
+      reason: '서울 밖 위치예요. 서울에서만 탈출점을 안내해요.',
     }
   }
 
@@ -105,30 +106,31 @@ export async function askEscapePlan({
         .join(', ')
     : '날씨 없음'
 
+  const river = waterwayName || '한강'
   const hangangLine = hangang
-    ? `가장 가까운 한강 도보 기준점: 위도 ${hangang.lat.toFixed(5)}, 경도 ${hangang.lng.toFixed(5)} (약 ${Number(toHangangKm || 0).toFixed(2)}km)`
+    ? `가장 가까운 ${river} 도보 기준점: 위도 ${hangang.lat.toFixed(5)}, 경도 ${hangang.lng.toFixed(5)} (약 ${Number(toHangangKm || 0).toFixed(2)}km)`
     : ''
 
   const hangangRule = skipHangang
-    ? `한강 진입점까지 약 ${Number(toHangangKm || 0).toFixed(2)}km로, 목표 ${targetKm}km보다 같거나 멀다.
-한강으로 가지 마라. 지금 위치에서 가장 가까운 버스 정류장(아주 가까우면 지하철역도 가능)만 고른다.
+    ? `${river} 진입점까지 약 ${Number(toHangangKm || 0).toFixed(2)}km로, 목표 ${targetKm}km보다 같거나 멀다.
+${river}으로 가지 마라. 지금 위치에서 가장 가까운 버스 정류장(아주 가까우면 지하철역도 가능)만 고른다. 서울 밖은 금지.
 vias는 빈 배열 [].`
-    : `핵심: 코스의 거의 전부는 한강공원·자전거길을 따라 동/서로 이동해야 한다.
+    : `핵심: 코스의 거의 전부는 서울 안 ${river} 공원·자전거길·하천길을 따라 이동해야 한다.
 목표 ${targetKm}km에 가장 가까운 후보를 고른다. 목표의 1.3배를 넘는 코스는 탈락이다.
-시내 지름길은 금지. vias는 만들지 마라.`
+시내 지름길·서울 밖 목적지는 금지. vias는 만들지 마라.`
 
   const candidateLine = candidates.length
-    ? `한강변을 따라 잰 후보만 고른다:\n${candidates
+    ? `${river}을 따라 잰 후보만 고른다:\n${candidates
         .map(
           (row, i) =>
-            `${i + 1}. ${row.name} / 전체 ${Number(row.runKm).toFixed(1)}km / 한강변 ${Number(row.route?.hangangKm || 0).toFixed(1)}km / ${row.dir || ''} / lat ${row.coords.lat}, lng ${row.coords.lng}`,
+            `${i + 1}. ${row.name} / 전체 ${Number(row.runKm).toFixed(1)}km / ${river} ${Number(row.route?.hangangKm || 0).toFixed(1)}km / ${row.dir || ''} / lat ${row.coords.lat}, lng ${row.coords.lng}`,
         )
         .join('\n')}`
     : ''
 
-  const prompt = `너는 서울 한강 러닝 탈출 코치다. 사용자는 목표 ${targetKm}km만큼 한강변을 뛴 뒤 지하철·버스로 끊고 귀가한다.
+  const prompt = `너는 서울 러닝 탈출 코치다. 사용자는 목표 ${targetKm}km만큼 ${river}을 뛴 뒤 지하철·버스로 끊고 귀가한다.
 목표보다 훨씬 긴 코스는 고르지 마라.
-서울 한강·공원 러닝만 다룬다. 서울이 아니면 추천을 하지 않는다.
+서울 안 한강·하천·공원 러닝만 다룬다. 서울이 아니면 추천을 하지 않는다. 경기·인천 역은 고르지 마라.
 
 현재 시각(서울): ${day.label}
 현재 위치(진입점): 위도 ${entry.lat.toFixed(5)}, 경도 ${entry.lng.toFixed(5)}
@@ -138,14 +140,14 @@ ${hangangLine}
 ${candidateLine}
 
 해야 할 일:
-1) 위치가 서울(한강 러닝 가능 권역)인지 확인한다. 아니면 inSeoul=false로 답한다.
+1) 위치가 서울인지 확인한다. 아니면 inSeoul=false로 답한다.
 2) 기상(온도·체감·습도·비·바람)을 반영해 탈출점을 고른다. 습도가 높거나 더우면 짧게 끊는 쪽을 우선한다.
-3) 오늘 요일·시간대·계절을 보고 한강 공원 이벤트·축제·불꽃·마켓·마라톤·주말 혼잡·야간 조명 등 가능성 있는 이벤트를 종합한다. 확실하지 않으면 "가능성"으로 말하고, 혼잡·우회·짧은 탈출을 제안한다.
-4) 차는 타지 않는다. 도보·한강공원·자전거길이 코스의 대부분이어야 한다.
+3) 오늘 요일·시간대·계절을 보고 ${river} 주변 이벤트·축제·불꽃·마켓·마라톤·주말 혼잡·야간 조명 등 가능성 있는 이벤트를 종합한다. 확실하지 않으면 "가능성"으로 말하고, 혼잡·우회·짧은 탈출을 제안한다.
+4) 차는 타지 않는다. 도보·공원·자전거길이 코스의 대부분이어야 한다.
 5) ${hangangRule}
-6) 목표 km에 맞는 실제 지하철역을 고른다. 후보가 있으면 그 이름과 좌표를 그대로 쓴다.
+6) 목표 km에 맞는 실제 서울 지하철역을 고른다. 후보가 있으면 그 이름과 좌표를 그대로 쓴다.
 7) 경로 좌표열(polyline)은 만들지 마라.
-8) briefing에 기상+이벤트+한강/정류장 이유를 2~4문장으로 설명한다.
+8) briefing에 기상+이벤트+${river}/정류장 이유를 2~4문장으로 설명한다.
 9) lat/lng는 서울 실제 좌표.
 
 JSON만 답한다. 다른 말은 쓰지 마라.
@@ -202,16 +204,17 @@ JSON만 답한다. 다른 말은 쓰지 마라.
   return pick
 }
 
-export async function askGeminiChooseRoute({ targetKm, options }) {
+export async function askGeminiChooseRoute({ targetKm, options, waterwayName = '한강' }) {
+  const river = waterwayName || '한강'
   const lines = options
     .map(
       (row, i) =>
-        `${i + 1}. ${row.name} / 전체 ${row.runKm.toFixed(1)}km / 한강변 ${Number(row.route?.hangangKm || 0).toFixed(1)}km (${Math.round((row.route?.hangangShare || 0) * 100)}%) / ${row.dir || ''} / ${row.pathNote || row.hint || ''}`,
+        `${i + 1}. ${row.name} / 전체 ${row.runKm.toFixed(1)}km / ${river} ${Number(row.route?.hangangKm || 0).toFixed(1)}km (${Math.round((row.route?.hangangShare || 0) * 100)}%) / ${row.dir || ''} / ${row.pathNote || row.hint || ''}`,
     )
     .join('\n')
 
-  const prompt = `너는 서울 한강 러닝 코치다. 아래는 한강변을 본길로 잰 코스다.
-목표 ${targetKm}km에 가장 가까운 것을 고른다. 한강을 따라가되, 목표의 1.3배를 넘는 코스는 탈락이다.
+  const prompt = `너는 서울 러닝 코치다. 아래는 서울 안 ${river}을 본길로 잰 코스다.
+목표 ${targetKm}km에 가장 가까운 것을 고른다. ${river}을 따라가되, 목표의 1.3배를 넘는 코스와 서울 밖 역은 탈락이다.
 
 ${lines}
 

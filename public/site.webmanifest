@@ -1,0 +1,27 @@
+{
+  "name": "한강탈출",
+  "short_name": "한강탈출",
+  "description": "서울 한강·하천 러닝을 끊고 나오는 웹 앱. 위치를 찍고 거리를 고르면 지하철로 탈출하는 코스를 찾아 줍니다.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "lang": "ko",
+  "dir": "ltr",
+  "background_color": "#e8eef0",
+  "theme_color": "#e8eef0",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

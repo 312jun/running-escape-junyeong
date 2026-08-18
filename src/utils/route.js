@@ -1,5 +1,6 @@
 import { haversineKm, locateOnTrack } from './geo'
 import {
+  hangangCourse,
   hangangPathStats,
   hangangRunVias,
   hangangSpineBetween,
@@ -22,7 +23,7 @@ export function naverWalkUrl(from, to, vias = [], names = {}) {
   const goal = place(to, names.to || '도착')
   const via = vias?.length
     ? vias
-        .map((p, i) => place(p, i === 0 ? '한강' : `경유${i + 1}`))
+        .map((p, i) => place(p, i === 0 ? names.via || p.name || '강변' : `경유${i + 1}`))
         .join(':')
     : '-'
 
@@ -175,9 +176,10 @@ function viaQuery(vias) {
   return `&via=${vias.map((p) => `${p.lat},${p.lng}`).join('|')}`
 }
 
-async function readWalkingApi(from, to, vias) {
+async function readWalkingApi(from, to, vias, street = false) {
+  const streetQ = street ? '&street=1' : ''
   const res = await fetch(
-    `/api/route?from=${from.lat},${from.lng}&to=${to.lat},${to.lng}${viaQuery(vias)}`,
+    `/api/route?from=${from.lat},${from.lng}&to=${to.lat},${to.lng}${viaQuery(vias)}${streetQ}`,
   )
   const data = await res.json().catch(() => ({}))
   if (!res.ok || !Array.isArray(data.points) || data.points.length < 2) {
@@ -191,13 +193,44 @@ async function readWalkingApi(from, to, vias) {
   }
 }
 
-export async function fetchFootRoute(from, to, vias = []) {
-  const routed = await readWalkingApi(from, to, vias)
+export async function fetchFootRoute(from, to, vias = [], street = false) {
+  const routed = await readWalkingApi(from, to, vias, street)
   return {
     ...routed,
     vias,
     viaHangang: vias.length > 0,
   }
+}
+
+const streetCache = new Map()
+
+/** 시내 접근·이탈: 직선이 아니라 도로를 따른 도보. */
+export async function streetLeg(from, to) {
+  const straight = haversineKm(from.lat, from.lng, to.lat, to.lng)
+  if (straight < 0.1) {
+    const points = densifyPath([from, to], 0.025)
+    return { points, km: pathLengthKm(points) }
+  }
+
+  const key = `${from.lat.toFixed(5)},${from.lng.toFixed(5)}>${to.lat.toFixed(5)},${to.lng.toFixed(5)}`
+  const hit = streetCache.get(key)
+  if (hit) return hit
+
+  const pending = fetchFootRoute(from, to, [], true)
+    .then((routed) => {
+      const km = Number(routed.km) || pathLengthKm(routed.points)
+      const result = { points: routed.points, km }
+      streetCache.set(key, result)
+      return result
+    })
+    .catch(() => {
+      streetCache.delete(key)
+      const points = densifyPath([from, to], 0.025)
+      return { points, km: pathLengthKm(points) }
+    })
+
+  streetCache.set(key, pending)
+  return pending
 }
 
 function joinLegs(parts) {
@@ -207,27 +240,34 @@ function joinLegs(parts) {
   )
 }
 
-/** 한강변을 본길로 고정: 긴 공원길 + 역까지는 짧은 이탈만 */
+/** 강변을 본길로 고정. 시내 접근·이탈은 도로 도보, 강변은 트랙. */
 export async function composeHangangRoute(from, to, opts = {}) {
+  const course = opts.course || hangangCourse(from)
   const { startSnap, endSnap, riverKm, points: spine } = hangangSpineBetween(
     from,
     to,
     opts.riverEndKm,
+    course,
   )
-  const inLeg = { points: densifyPath([from, startSnap], 0.025) }
-  const outLeg = { points: densifyPath([endSnap, to], 0.025) }
+  const inLeg = opts.inLeg?.points ? opts.inLeg : await streetLeg(from, startSnap)
+  const outOff = haversineKm(endSnap.lat, endSnap.lng, to.lat, to.lng)
+  const outLeg =
+    outOff < 0.12
+      ? { points: densifyPath([endSnap, to], 0.025), km: outOff }
+      : await streetLeg(endSnap, to)
 
   const points = joinLegs([inLeg.points, spine, outLeg.points])
   const km = pathLengthKm(points)
-  const stats = hangangPathStats(points)
-  const vias = hangangRunVias(from, to, 5, opts.riverEndKm)
+  const stats = hangangPathStats(points, 0.4, course)
+  const vias = hangangRunVias(from, to, 5, opts.riverEndKm, course)
 
   return {
     points,
     km,
     durationMin: etaMin(km),
-    source: 'hangang',
+    source: course.kind === 'stream' ? 'stream' : 'hangang',
     viaHangang: true,
+    waterwayName: course.name,
     hangangKm: Math.max(stats.hangangKm, riverKm),
     hangangShare: stats.share,
     vias,
@@ -240,18 +280,20 @@ export async function loadRunPath(from, to, vias = [], opts = {}) {
     try {
       return await composeHangangRoute(from, to, opts)
     } catch {
-      const points = densifyPath(hangangSpinePoints(from, to))
+      const course = opts.course || hangangCourse(from)
+      const points = densifyPath(hangangSpinePoints(from, to, course))
       const km = pathLengthKm(points)
-      const stats = hangangPathStats(points)
+      const stats = hangangPathStats(points, 0.4, course)
       return {
         points,
         km,
         durationMin: etaMin(km),
-        source: 'hangang',
+        source: course.kind === 'stream' ? 'stream' : 'hangang',
         viaHangang: true,
+        waterwayName: course.name,
         hangangKm: stats.hangangKm,
         hangangShare: stats.share,
-        vias: hangangRunVias(from, to),
+        vias: hangangRunVias(from, to, 5, opts.riverEndKm, course),
       }
     }
   }

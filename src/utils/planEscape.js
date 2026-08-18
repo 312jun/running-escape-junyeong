@@ -1,13 +1,15 @@
 import { askEscapePlan, askGeminiChooseRoute } from './askGemini'
 import {
-  hangangApproachKm,
   hangangRunVias,
   listRiverExits,
   listRiverExitsOffset,
-  nearestHangangPoint,
+  listRunCourseCandidates,
+  nearestWaterCourse,
+  pickRunCourse,
+  waterAccessSnaps,
 } from './hangang'
-import { formatKm } from './geo'
-import { composeHangangRoute, loadRunPath } from './route'
+import { formatKm, haversineKm } from './geo'
+import { composeHangangRoute, loadRunPath, streetLeg } from './route'
 import { nearestBusStop } from './seoul'
 
 function fitScore(runKm, targetKm) {
@@ -43,7 +45,62 @@ function closestToTarget(rows, targetKm) {
   })[0]
 }
 
-async function planNearestStop({ entry, targetKm, weather, toHangangKm, hangang }) {
+function waterLabel(course) {
+  return course?.name || '한강'
+}
+
+function waterPoint(course) {
+  if (!course?.snap) return null
+  return {
+    lat: course.snap.lat,
+    lng: course.snap.lng,
+    offTrackKm: course.approachKm,
+    side: course.side,
+  }
+}
+
+async function walkToSnap(entry, snap) {
+  try {
+    return await streetLeg(entry, { lat: snap.lat, lng: snap.lng })
+  } catch {
+    return null
+  }
+}
+
+async function withWalkApproach(entry, course) {
+  const straight = Number(course.approachKm) || 0
+  const primary = await walkToSnap(entry, course.snap)
+  let bestSnap = course.snap
+  let bestLeg = primary
+  let bestKm = primary?.km
+
+  const blocked = Number.isFinite(bestKm) && bestKm > straight * 1.65 + 0.2
+  if (blocked) {
+    const extras = waterAccessSnaps(course, [0.5, -0.5, 1.0, -1.0]).filter(
+      (snap) => haversineKm(snap.lat, snap.lng, course.snap.lat, course.snap.lng) > 0.18,
+    )
+    const tried = await Promise.all(extras.map(async (snap) => ({ snap, inLeg: await walkToSnap(entry, snap) })))
+    for (const row of tried) {
+      const km = row.inLeg?.km
+      if (!Number.isFinite(km)) continue
+      if (!Number.isFinite(bestKm) || km + 0.08 < bestKm) {
+        bestKm = km
+        bestSnap = row.snap
+        bestLeg = row.inLeg
+      }
+    }
+  }
+
+  if (!Number.isFinite(bestKm)) return { ...course, inLeg: null }
+  return {
+    ...course,
+    snap: bestSnap,
+    approachKm: bestKm,
+    inLeg: bestLeg,
+  }
+}
+
+async function planNearestStop({ entry, targetKm, weather, toHangangKm, hangang, waterwayName }) {
   let bus = null
   try {
     bus = await nearestBusStop(entry.lat, entry.lng)
@@ -58,6 +115,7 @@ async function planNearestStop({ entry, targetKm, weather, toHangangKm, hangang 
     skipHangang: true,
     toHangangKm,
     hangang,
+    waterwayName: waterwayName || '한강',
   }).catch(() => null)
 
   const dest = bus?.coords || draft?.coords
@@ -72,6 +130,7 @@ async function planNearestStop({ entry, targetKm, weather, toHangangKm, hangang 
 
   const route = await loadRunPath(entry, dest, [], { hangang: false })
   const name = bus?.name || draft?.name || '가까운 정류장'
+  const river = waterwayName || '한강'
 
   return {
     blocked: false,
@@ -81,25 +140,31 @@ async function planNearestStop({ entry, targetKm, weather, toHangangKm, hangang 
     runKm: route.km,
     dir: draft?.dir || 'east',
     pathOk: true,
-    pathNote: `한강까지 ${formatKm(toHangangKm)}라 목표 ${targetKm}km보다 멀어요. 가까운 정류장으로 안내합니다.`,
-    hint: '한강 대신 가까운 정류장',
-    reason: `한강 진입점이 목표 거리보다 멀어 ${name}으로 끊습니다.`,
+    pathNote: `${river}까지 ${formatKm(toHangangKm)}라 목표 ${targetKm}km보다 멀어요. 가까운 정류장으로 안내합니다.`,
+    hint: `${river} 대신 가까운 정류장`,
+    reason: `${river} 진입점이 목표 거리보다 멀어 ${name}으로 끊습니다.`,
     briefing:
       draft?.briefing ||
-      `가장 가까운 한강까지 ${formatKm(toHangangKm)}입니다. 선택한 ${targetKm}km보다 멀어서 한강 대신 가까운 정류장으로 안내합니다.`,
+      `가장 가까운 ${river}까지 ${formatKm(toHangangKm)}입니다. 선택한 ${targetKm}km보다 멀어서 ${river} 대신 가까운 정류장으로 안내합니다.`,
     weatherNote: draft?.weatherNote || '',
     eventNote: draft?.eventNote || '',
     coords: dest,
     vias: [],
     skipHangang: true,
+    waterwayName: river,
     route: { ...route, viaHangang: false, judgedByGemini: Boolean(draft) },
     alternates: [],
   }
 }
 
-async function measureHangangStop(entry, stop, dir, riverEndKm) {
-  const route = await composeHangangRoute(entry, { lat: stop.lat, lng: stop.lng }, { riverEndKm })
+async function measureHangangStop(entry, stop, dir, riverEndKm, course, inLeg) {
+  const route = await composeHangangRoute(
+    entry,
+    { lat: stop.lat, lng: stop.lng },
+    { riverEndKm, course, inLeg },
+  )
   const share = Number(route.hangangShare) || 0
+  const label = waterLabel(course)
   return {
     name: stop.name,
     type: stop.type || 'subway',
@@ -108,29 +173,46 @@ async function measureHangangStop(entry, stop, dir, riverEndKm) {
     dir,
     runKm: route.km,
     pathOk: share >= 0.55 || Number(route.hangangKm) >= 1,
-    pathNote: `한강변 ${formatKm(route.hangangKm)} · 전체 ${formatKm(route.km)}`,
-    hint: `한강변 ${formatKm(route.hangangKm)}`,
-    vias: route.vias || hangangRunVias(entry, { lat: stop.lat, lng: stop.lng }, 5, riverEndKm),
-    route: { ...route, viaHangang: true, judgedByGemini: false },
+    pathNote: `${label} ${formatKm(route.hangangKm)} · 전체 ${formatKm(route.km)}`,
+    hint: `${label} ${formatKm(route.hangangKm)}`,
+    vias: route.vias || hangangRunVias(entry, { lat: stop.lat, lng: stop.lng }, 5, riverEndKm, course),
+    waterwayName: label,
+    route: { ...route, viaHangang: true, waterwayName: label, judgedByGemini: false },
   }
 }
 
 export async function planEscapeRun({ entry, targetKm, weather }) {
-  const hangang = nearestHangangPoint(entry)
-  const toHangangKm = hangangApproachKm(entry)
-  const skipHangang = toHangangKm >= Number(targetKm)
+  const target = Number(targetKm)
+  const shortlist = listRunCourseCandidates(entry, target)
+  const measured = shortlist.length
+    ? await Promise.all(shortlist.map((course) => withWalkApproach(entry, course)))
+    : []
 
-  if (skipHangang) {
-    return planNearestStop({ entry, targetKm, weather, toHangangKm, hangang })
+  const course = pickRunCourse(measured, target)
+  if (!course) {
+    const fallback = measured.length
+      ? [...measured].sort((a, b) => a.approachKm - b.approachKm)[0]
+      : nearestWaterCourse(entry)
+    return planNearestStop({
+      entry,
+      targetKm,
+      weather,
+      toHangangKm: fallback?.approachKm ?? 0,
+      hangang: waterPoint(fallback),
+      waterwayName: waterLabel(fallback),
+    })
   }
 
-  const target = Number(targetKm)
+  const inLeg = course.inLeg || null
+  const toWaterKm = course.approachKm
+  const hangang = waterPoint(course)
+  const label = waterLabel(course)
   const exits = ['east', 'west']
-    .flatMap((dir) => listRiverExits(entry, target, dir, 3))
+    .flatMap((dir) => listRiverExits(entry, target, dir, 3, course))
     .filter((exit, i, arr) => arr.findIndex((row) => row.stop.name === exit.stop.name) === i)
   const mainNames = new Set(exits.map((exit) => exit.stop.name))
   const spreadExits = ['short', 'long']
-    .flatMap((bias) => listRiverExitsOffset(entry, target, bias, 2))
+    .flatMap((bias) => listRiverExitsOffset(entry, target, bias, 2, course))
     .filter((exit, i, arr) => {
       if (mainNames.has(exit.stop.name)) return false
       return arr.findIndex((row) => row.stop.name === exit.stop.name) === i
@@ -140,7 +222,14 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     await Promise.all(
       [...exits, ...spreadExits].map(async (exit) => {
         try {
-          const measured = await measureHangangStop(entry, exit.stop, exit.dir, exit.riverEndKm)
+          const measured = await measureHangangStop(
+            entry,
+            exit.stop,
+            exit.dir,
+            exit.riverEndKm,
+            course,
+            inLeg,
+          )
           return { ...measured, spreadOnly: !mainNames.has(exit.stop.name) }
         } catch {
           return null
@@ -159,8 +248,9 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     targetKm,
     weather,
     skipHangang: false,
-    toHangangKm,
+    toHangangKm: toWaterKm,
     hangang,
+    waterwayName: label,
     candidates: pool,
   }).catch(() => null)
 
@@ -168,14 +258,14 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     return (
       draft || {
         blocked: true,
-        reason: '한강변을 따라 목표 거리에 맞는 탈출점을 못 찾았어요.',
+        reason: `${label}을 따라 목표 거리에 맞는 탈출점을 못 찾았어요.`,
       }
     )
   }
 
   let chosen = closestToTarget(pool, targetKm)
   try {
-    const decision = await askGeminiChooseRoute({ targetKm, options: pool })
+    const decision = await askGeminiChooseRoute({ targetKm, options: pool, waterwayName: label })
     const byName = decision?.name
       ? pool.find((row) => row.name === String(decision.name).trim())
       : null
@@ -191,7 +281,7 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
       }
     }
   } catch {
-    // 한강변 거리로만 고른다
+    // 강변 거리로만 고른다
   }
 
   if (draft?.name) {
@@ -209,11 +299,15 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     ...picked,
     kind: 'main',
     skipHangang: false,
+    waterwayName: label,
     briefing: draft?.briefing || chosen.briefing,
     weatherNote: draft?.weatherNote || '',
     eventNote: draft?.eventNote || '',
-    reason: chosen.reason || draft?.reason || `한강변을 따라 ${formatKm(chosen.route.hangangKm)} 뛴 뒤 ${chosen.name}에서 끊습니다.`,
-    route: { ...chosen.route, judgedByGemini: true },
+    reason:
+      chosen.reason ||
+      draft?.reason ||
+      `${label}을 따라 ${formatKm(chosen.route.hangangKm)} 뛴 뒤 ${chosen.name}에서 끊습니다.`,
+    route: { ...chosen.route, judgedByGemini: true, waterwayName: label },
   }
 
   const alternates = pickSpreadAlts(spreadPool, chosen, target)
@@ -223,6 +317,7 @@ export async function planEscapeRun({ entry, targetKm, weather }) {
     ...chosen,
     vias: chosen.vias,
     skipHangang: false,
+    waterwayName: label,
     alternates,
   }
 }
@@ -240,6 +335,7 @@ function toAlt(row, kind) {
     pathNote: row.pathNote || row.hint,
     coords: row.coords,
     vias: row.vias,
+    waterwayName: row.waterwayName,
     route: row.route,
   }
 }

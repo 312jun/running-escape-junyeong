@@ -934,6 +934,28 @@
   margin: 6px 0 10px;
 }
 
+.home-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.home-stat strong {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--go);
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
 .page-head-tight {
   align-items: center;
 }

@@ -27,6 +27,7 @@ export function routeProxy(googleKey) {
         const from = parsePoint(url.searchParams.get('from'))
         const to = parsePoint(url.searchParams.get('to'))
         const vias = parseVias(url.searchParams.get('via'))
+        const preferOsrm = url.searchParams.get('street') === '1'
         if (!from || !to) {
           res.statusCode = 400
           res.setHeader('Content-Type', 'application/json')
@@ -35,7 +36,7 @@ export function routeProxy(googleKey) {
         }
 
         try {
-          const route = await fetchWalkingRoute(from, to, vias, { googleKey })
+          const route = await fetchWalkingRoute(from, to, vias, { googleKey, preferOsrm })
           res.statusCode = 200
           res.setHeader('Content-Type', 'application/json')
           res.end(JSON.stringify(route))

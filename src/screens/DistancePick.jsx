@@ -33,7 +33,7 @@ export default function DistancePick({ entry, onBack, onPickKm }) {
         </div>
       </header>
 
-      <p className="lede lede-compact">오늘 한강에서 얼마나 뛰고 끊을까요?</p>
+      <p className="lede lede-compact">오늘 서울에서 얼마나 뛰고 끊을까요?</p>
       {weather ? (
         <p className={`weather-chip ${weather.wet ? 'is-warn' : ''}`}>
           {formatWeatherShort(weather)}

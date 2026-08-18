@@ -1,6 +1,17 @@
 import { HANGANG_NORTH, HANGANG_SOUTH } from '../data/hangang'
 import { HANGANG_STOPS } from '../data/hangangStops'
-import { haversineKm, snapToTrack, walkTrack } from './geo'
+import { SEOUL_STREAMS } from '../data/streams'
+import { SEOUL_SUBWAY_STOPS } from '../data/subwayStops'
+import { haversineKm, pointAtTrackKm, snapToTrack, walkTrack } from './geo'
+import { isInSeoul, isSeoulStationName } from './seoul'
+
+const MAX_STATION_OFF_KM = 1.2
+const MIN_ALONG_KM = 0.3
+const STREAM_CANDIDATE_LIMIT = 3
+/** 한강이 하천보다 이 비율 이상 길고, 목표의 12%(최소 0.5km) 이상 더 멀면 하천. */
+const HANGANG_VS_STREAM_RATIO = 1.4
+const HANGANG_VS_STREAM_MIN_EXTRA_KM = 0.5
+const HANGANG_VS_STREAM_TARGET_SHARE = 0.12
 
 export function pickHangangBank(point) {
   const south = snapToTrack(point.lat, point.lng, HANGANG_SOUTH)
@@ -28,6 +39,147 @@ export function hangangApproachKm(from) {
   return haversineKm(from.lat, from.lng, point.lat, point.lng)
 }
 
+function geoDir(from, to) {
+  const dLat = to.lat - from.lat
+  const dLng = to.lng - from.lng
+  if (Math.abs(dLng) >= Math.abs(dLat)) return dLng >= 0 ? 'east' : 'west'
+  return dLat >= 0 ? 'north' : 'south'
+}
+
+export function hangangCourse(from) {
+  const { bank, snap, side } = pickHangangBank(from)
+  return {
+    id: 'hangang',
+    name: '한강',
+    kind: 'hangang',
+    bank,
+    snap,
+    side,
+    approachKm: snap.offTrackKm,
+    stops: HANGANG_STOPS.filter((s) => isInSeoul(s.lat, s.lng)),
+    maxStationOffKm: MAX_STATION_OFF_KM,
+  }
+}
+
+function streamCourse(from, stream) {
+  const snap = snapToTrack(from.lat, from.lng, stream.track)
+  return {
+    id: stream.id,
+    name: stream.name,
+    kind: 'stream',
+    bank: stream.track,
+    snap,
+    side: 'path',
+    approachKm: snap.offTrackKm,
+    stops: SEOUL_SUBWAY_STOPS.filter((s) => isInSeoul(s.lat, s.lng) && isSeoulStationName(s.name)),
+    maxStationOffKm: 0.85,
+  }
+}
+
+/** 직선 스냅이 막혀 있을 때를 대비해 트랙 위 다른 진입점. */
+export function waterAccessSnaps(course, offsetsKm = [0, 0.5, -0.5, 1.0, -1.0]) {
+  const { bank, snap } = course || {}
+  if (!snap) return []
+  if (!bank?.length) return [snap]
+  const out = []
+  for (const off of offsetsKm) {
+    const km = Math.max(0, snap.kmFromStart + off)
+    const pt = pointAtTrackKm(bank, km)
+    if (!pt || !isInSeoul(pt.lat, pt.lng)) continue
+    if (out.some((row) => haversineKm(row.lat, row.lng, pt.lat, pt.lng) < 0.18)) continue
+    out.push({
+      lat: pt.lat,
+      lng: pt.lng,
+      kmFromStart: km,
+      offTrackKm: Math.abs(off) < 0.05 ? snap.offTrackKm : 0,
+    })
+  }
+  return out.length ? out : [snap]
+}
+
+export function nearestStreamCourse(from) {
+  let best = null
+  for (const stream of SEOUL_STREAMS) {
+    const course = streamCourse(from, stream)
+    if (!isInSeoul(course.snap.lat, course.snap.lng)) continue
+    if (!best || course.approachKm < best.approachKm) best = course
+  }
+  return best
+}
+
+/** 한강·하천 중 직선으로 가장 가까운 물길. 안내 문구용. */
+export function nearestWaterCourse(from) {
+  if (!from || !isInSeoul(from.lat, from.lng)) return null
+  const hangang = hangangCourse(from)
+  const stream = nearestStreamCourse(from)
+  if (!stream) return hangang
+  return stream.approachKm <= hangang.approachKm ? stream : hangang
+}
+
+/**
+ * 한강 접근이 하천보다 목표 거리 대비 너무 길면 하천을 고른다.
+ * approachKm은 직선이 아니라 도보 km를 넣는 것이 맞다.
+ */
+export function hangangTooFarVsStream(hangangKm, streamKm, targetKm) {
+  const hangang = Number(hangangKm)
+  const stream = Number(streamKm)
+  const target = Math.max(0.5, Number(targetKm) || 0)
+  if (!Number.isFinite(hangang) || !Number.isFinite(stream)) return false
+  if (hangang >= target && stream < target) return true
+  if (stream >= target) return false
+  const extra = hangang - stream
+  const ratio = hangang / Math.max(stream, 0.12)
+  const extraNeed = Math.max(HANGANG_VS_STREAM_MIN_EXTRA_KM, target * HANGANG_VS_STREAM_TARGET_SHARE)
+  return extra >= extraNeed && ratio >= HANGANG_VS_STREAM_RATIO
+}
+
+/**
+ * 목표 km 안에 직선으로 닿는 한강·하천 후보.
+ * 직선은 하한이라, 실제 선택은 도보 거리를 잰 뒤 pickRunCourse로 한다.
+ */
+export function listRunCourseCandidates(from, targetKm) {
+  if (!from || !isInSeoul(from.lat, from.lng)) return []
+  const target = Math.max(0.5, Number(targetKm) || 0)
+  const hangang = hangangCourse(from)
+  const streams = []
+  for (const stream of SEOUL_STREAMS) {
+    const course = streamCourse(from, stream)
+    if (!isInSeoul(course.snap.lat, course.snap.lng)) continue
+    if (course.approachKm >= target) continue
+    streams.push(course)
+  }
+  streams.sort((a, b) => a.approachKm - b.approachKm)
+
+  const out = []
+  if (hangang.approachKm < target) out.push(hangang)
+  out.push(...streams.slice(0, STREAM_CANDIDATE_LIMIT))
+  return out
+}
+
+/**
+ * 도보 접근 km가 목표보다 짧은 물길 중 고른다.
+ * 한강이 가장 가까운 하천보다 너무 멀면 하천, 아니면 한강.
+ * 둘 다 목표 km보다 멀면 null (정류장으로 끊기).
+ */
+export function pickRunCourse(courses, targetKm) {
+  const target = Math.max(0.5, Number(targetKm) || 0)
+  const list = Array.isArray(courses) ? courses.filter(Boolean) : []
+  const hangang = list.find((course) => course.kind === 'hangang') || null
+  const stream =
+    list
+      .filter((course) => course.kind === 'stream')
+      .sort((a, b) => a.approachKm - b.approachKm)[0] || null
+  const hangangOk = Boolean(hangang && hangang.approachKm < target)
+  const streamOk = Boolean(stream && stream.approachKm < target)
+
+  if (hangangOk && streamOk && hangangTooFarVsStream(hangang.approachKm, stream.approachKm, target)) {
+    return stream
+  }
+  if (hangangOk) return hangang
+  if (streamOk) return stream
+  return null
+}
+
 export function uniqueKeep(points, minKm = 0.06) {
   const out = []
   for (const p of points) {
@@ -40,18 +192,16 @@ export function uniqueKeep(points, minKm = 0.06) {
 }
 
 /**
- * 길찾기 첫 목적지: 가장 가까운 한강 도보 기준점 하나.
- * 이미 한강 위면 경유 없이 최종 목적지만 간다.
+ * 길찾기 첫 목적지: 강·하천 진입점 하나.
+ * 이미 강변 위면 경유 없이 최종 목적지만 간다.
  */
-export function hangangVias(from) {
+export function hangangVias(from, course = null) {
   if (!from) return []
-  const point = nearestHangangPoint(from)
+  const used = course || hangangCourse(from)
+  const point = used.snap
   if (haversineKm(from.lat, from.lng, point.lat, point.lng) < 0.08) return []
-  return [{ lat: point.lat, lng: point.lng }]
+  return [{ lat: point.lat, lng: point.lng, name: used.name }]
 }
-
-const MAX_STATION_OFF_KM = 1.2
-const MIN_ALONG_KM = 0.3
 
 /**
  * 한강변에서 채울 거리. 접근·역까지 이탈을 빼서 전체 코스가 목표 km에 맞게 한다.
@@ -83,33 +233,38 @@ function toExit(row) {
     riverKm: row.along,
     estTotal: row.estTotal,
     stop: row.stop,
+    course: row.course,
   }
 }
 
-function collectRiverExits(from, dir) {
-  if (!from || !dir) return []
-  const { bank, snap, side } = pickHangangBank(from)
-  const approachKm = haversineKm(from.lat, from.lng, snap.lat, snap.lng)
-  const sign = dir === 'west' ? -1 : 1
+function collectRiverExits(from, sign, course) {
+  if (!from || !course) return []
+  const { bank, snap, side, stops } = course
+  const approachKm = Number(course.approachKm) || haversineKm(from.lat, from.lng, snap.lat, snap.lng)
+  const maxOff = Number(course.maxStationOffKm) || MAX_STATION_OFF_KM
 
-  return HANGANG_STOPS.map((stop) => {
-    const at = snapToTrack(stop.lat, stop.lng, bank)
-    const along = (at.kmFromStart - snap.kmFromStart) * sign
-    const estTotal = approachKm + along + at.offTrackKm
-    return {
-      stop,
-      snap: at,
-      along,
-      off: at.offTrackKm,
-      estTotal,
-      dir,
-      side,
-      bank,
-      startSnap: snap,
-      approachKm,
-      sameBank: stop.side === side,
-    }
-  }).filter((row) => row.off <= MAX_STATION_OFF_KM && row.along > MIN_ALONG_KM)
+  return stops
+    .filter((stop) => isInSeoul(stop.lat, stop.lng) && isSeoulStationName(stop.name))
+    .map((stop) => {
+      const at = snapToTrack(stop.lat, stop.lng, bank)
+      const along = (at.kmFromStart - snap.kmFromStart) * sign
+      const estTotal = approachKm + along + at.offTrackKm
+      return {
+        stop,
+        snap: at,
+        along,
+        off: at.offTrackKm,
+        estTotal,
+        dir: geoDir(snap, at),
+        side,
+        bank,
+        startSnap: snap,
+        approachKm,
+        sameBank: course.kind === 'hangang' ? stop.side === side : true,
+        course,
+      }
+    })
+    .filter((row) => row.off <= maxOff && row.along > MIN_ALONG_KM && isInSeoul(row.snap.lat, row.snap.lng))
 }
 
 function uniqExits(rows, limit) {
@@ -124,10 +279,15 @@ function uniqExits(rows, limit) {
   return out
 }
 
+function trackSign(dir) {
+  return dir === 'west' || dir === 'south' ? -1 : 1
+}
+
 /** 한 방향으로, 목표 전체 km에 가까운 강변 탈출점을 여러 개 고른다. */
-export function listRiverExits(from, targetKm, dir, limit = 3) {
+export function listRiverExits(from, targetKm, dir, limit = 3, course = null) {
   if (!from || !dir) return []
-  const scored = collectRiverExits(from, dir)
+  const used = course || hangangCourse(from)
+  const scored = collectRiverExits(from, trackSign(dir), used)
   if (!scored.length) return []
 
   const target = Math.max(0.5, Number(targetKm) || 0)
@@ -158,10 +318,11 @@ export function listRiverExits(from, targetKm, dir, limit = 3) {
 }
 
 /** 목표보다 짧거나 긴 탈출점. 대표 추천 정렬과는 별개. */
-export function listRiverExitsOffset(from, targetKm, bias, limit = 3) {
+export function listRiverExitsOffset(from, targetKm, bias, limit = 3, course = null) {
   const target = Math.max(0.5, Number(targetKm) || 0)
   const margin = 0.12
-  const scored = ['east', 'west'].flatMap((dir) => collectRiverExits(from, dir))
+  const used = course || hangangCourse(from)
+  const scored = [1, -1].flatMap((sign) => collectRiverExits(from, sign, used))
   const sideRows =
     bias === 'short'
       ? scored.filter((row) => row.estTotal < target - margin)
@@ -182,9 +343,10 @@ export function pickRiverExit(from, targetKm, dir) {
   return listRiverExits(from, targetKm, dir, 1)[0] || null
 }
 
-export function hangangRunVias(from, to, max = 5, riverEndKm = null) {
-  if (!from || !to) return hangangVias(from)
-  const { bank, snap } = pickHangangBank(from)
+export function hangangRunVias(from, to, max = 5, riverEndKm = null, course = null) {
+  if (!from || !to) return hangangVias(from, course)
+  const used = course || hangangCourse(from)
+  const { bank, snap } = used
   const end = snapToTrack(to.lat, to.lng, bank)
   const endKm =
     riverEndKm == null
@@ -193,17 +355,19 @@ export function hangangRunVias(from, to, max = 5, riverEndKm = null) {
         ? Math.max(end.kmFromStart, riverEndKm)
         : Math.min(end.kmFromStart, riverEndKm)
   const pts = walkTrack(bank, snap.kmFromStart, endKm, 0.35)
-  if (pts.length <= max) return uniqueKeep(pts, 0.12)
+  const named = pts.map((p, i) => (i === 0 ? { ...p, name: used.name } : p))
+  if (named.length <= max) return uniqueKeep(named, 0.12)
   const picked = []
   for (let i = 0; i < max; i += 1) {
-    const idx = Math.round((i / (max - 1)) * (pts.length - 1))
-    picked.push(pts[idx])
+    const idx = Math.round((i / (max - 1)) * (named.length - 1))
+    picked.push(named[idx])
   }
   return uniqueKeep(picked, 0.12)
 }
 
-export function hangangSpineBetween(from, to, riverEndKm = null) {
-  const { bank, snap: startSnap } = pickHangangBank(from)
+export function hangangSpineBetween(from, to, riverEndKm = null, course = null) {
+  const used = course || hangangCourse(from)
+  const { bank, snap: startSnap } = used
   const endSnap = snapToTrack(to.lat, to.lng, bank)
   const farKm =
     riverEndKm == null
@@ -223,17 +387,31 @@ export function hangangSpineBetween(from, to, riverEndKm = null) {
     endSnap,
     riverKm: Math.abs(farKm - startSnap.kmFromStart) + Math.abs(farKm - endSnap.kmFromStart),
     points,
+    course: used,
   }
 }
 
-export function hangangSpinePoints(from, to) {
-  const { startSnap, endSnap, points } = hangangSpineBetween(from, to)
+export function hangangSpinePoints(from, to, course = null) {
+  const { startSnap, endSnap, points } = hangangSpineBetween(from, to, null, course)
   return uniqueKeep([from, { lat: startSnap.lat, lng: startSnap.lng }, ...points, { lat: endSnap.lat, lng: endSnap.lng }, to])
 }
 
-/** 경로 중 한강변(약 400m 안)을 따른 거리 비율 */
-export function hangangPathStats(points, maxOffKm = 0.4) {
+function offToTracks(point, tracks, maxOffKm) {
+  let best = Infinity
+  for (const track of tracks) {
+    const snap = snapToTrack(point.lat, point.lng, track)
+    if (snap.offTrackKm < best) best = snap.offTrackKm
+  }
+  return best <= maxOffKm
+}
+
+/** 경로 중 강변(약 400m 안)을 따른 거리 비율 */
+export function hangangPathStats(points, maxOffKm = 0.4, course = null) {
   if (!points?.length || points.length < 2) return { hangangKm: 0, totalKm: 0, share: 0 }
+  const tracks =
+    course?.kind === 'stream' && course.bank
+      ? [course.bank]
+      : [HANGANG_SOUTH, HANGANG_NORTH]
   let hangangKm = 0
   let totalKm = 0
   for (let i = 0; i < points.length - 1; i += 1) {
@@ -242,9 +420,7 @@ export function hangangPathStats(points, maxOffKm = 0.4) {
     const seg = haversineKm(a.lat, a.lng, b.lat, b.lng)
     totalKm += seg
     const mid = { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 }
-    const south = snapToTrack(mid.lat, mid.lng, HANGANG_SOUTH)
-    const north = snapToTrack(mid.lat, mid.lng, HANGANG_NORTH)
-    if (Math.min(south.offTrackKm, north.offTrackKm) <= maxOffKm) hangangKm += seg
+    if (offToTracks(mid, tracks, maxOffKm)) hangangKm += seg
   }
   return { hangangKm, totalKm, share: totalKm > 0 ? hangangKm / totalKm : 0 }
 }

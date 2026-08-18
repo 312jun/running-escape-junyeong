@@ -77,7 +77,7 @@ export default function EntryMapPicker({ center, pin, live, onPick, hint }) {
   return (
     <div className="entry-map-block">
       <p className="entry-map-hint">
-        {hint || '지도를 눌러 한강에 들어간 자리를 찍으세요.'}
+        {hint || '지도를 눌러 서울 안 출발 위치를 찍으세요.'}
       </p>
       <div ref={wrapRef} className="entry-map entry-map-tall" />
     </div>

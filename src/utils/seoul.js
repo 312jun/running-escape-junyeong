@@ -1,9 +1,9 @@
-/** 서울시 대략 경계 (한강 러닝 앱용) */
+/** 서울시 25개 구 대략 경계. 경기(의정부·성남·안양·광명·하남)는 넣지 않는다. */
 const SEOUL = {
-  minLat: 37.413,
-  maxLat: 37.715,
-  minLng: 126.734,
-  maxLng: 127.269,
+  minLat: 37.428,
+  maxLat: 37.701,
+  minLng: 126.764,
+  maxLng: 127.184,
 }
 
 export function isInSeoul(lat, lng) {
@@ -11,6 +11,13 @@ export function isInSeoul(lat, lng) {
   const b = Number(lng)
   if (!Number.isFinite(a) || !Number.isFinite(b)) return false
   return a >= SEOUL.minLat && a <= SEOUL.maxLat && b >= SEOUL.minLng && b <= SEOUL.maxLng
+}
+
+/** 서울시 지하철이 아닌 경기권 역 이름. */
+const OUTSIDE_SEOUL_STOP = /광명|철산|역곡|소사|부천|송내|부평|주안|인천|의정부|회룡|망월사|하남|미사|모란|야탑|이매|서현|수내|정자|미금|오리|죽전|판교|과천|대공원|경마공원|선바위|인덕원|평촌|범계|산본|금정|광교|수지|성남/
+
+export function isSeoulStationName(name) {
+  return Boolean(name) && !OUTSIDE_SEOUL_STOP.test(String(name))
 }
 
 function looksLikeSeoul(hit) {
@@ -29,7 +36,7 @@ export async function searchSeoulPlaces(query) {
   url.searchParams.set('addressdetails', '1')
   url.searchParams.set('limit', '6')
   url.searchParams.set('countrycodes', 'kr')
-  url.searchParams.set('viewbox', '126.734,37.715,127.269,37.413')
+  url.searchParams.set('viewbox', '126.764,37.701,127.184,37.428')
   url.searchParams.set('bounded', '1')
 
   const res = await fetch(url, { headers: { Accept: 'application/json' } })
