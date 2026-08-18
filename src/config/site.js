@@ -35,4 +35,6 @@ export const SCREEN_META = {
   },
 }
 
-export const GA_MEASUREMENT_ID = String(import.meta.env.VITE_GA_MEASUREMENT_ID || '').trim()
+export const GA_MEASUREMENT_ID = String(
+  import.meta.env.VITE_GA_MEASUREMENT_ID || 'G-9Y56RNQGY8',
+).trim()

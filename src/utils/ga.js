@@ -7,25 +7,28 @@ export function isGaReady() {
 }
 
 export function initGa() {
-  if (!isGaReady() || window.gtag) return
+  if (!isGaReady()) return
 
   window.dataLayer = window.dataLayer || []
-  window.gtag = function gtag() {
-    window.dataLayer.push(arguments)
+  if (typeof window.gtag !== 'function') {
+    window.gtag = function gtag() {
+      window.dataLayer.push(arguments)
+    }
+    const script = document.createElement('script')
+    script.async = true
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`
+    document.head.appendChild(script)
+    window.gtag('js', new Date())
+    window.gtag('config', GA_MEASUREMENT_ID, {
+      send_page_view: true,
+      anonymize_ip: true,
+      app_name: SITE.name,
+    })
   }
 
-  const script = document.createElement('script')
-  script.async = true
-  script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`
-  document.head.appendChild(script)
-
-  window.gtag('js', new Date())
-  window.gtag('config', GA_MEASUREMENT_ID, {
-    send_page_view: true,
-    anonymize_ip: true,
-    cookie_flags: 'SameSite=None;Secure',
-    app_name: SITE.name,
-  })
+  if (import.meta.env.DEV) {
+    window.gtag('set', { debug_mode: true })
+  }
 }
 
 export function trackScreen(screenName, title) {
